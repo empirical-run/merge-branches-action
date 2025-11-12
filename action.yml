@@ -1,0 +1,18 @@
+name: "Merge branches in Empirical repo"
+description: "This action merges branches in Empirical test repo, to sync with your app repo."
+author: "empirical.run"
+
+# Add your action's branding here. This will appear on the GitHub Marketplace.
+branding:
+  icon: "send"
+  color: "gray-dark"
+
+# Define your inputs here.
+inputs:
+  auth-key:
+    description: "Auth key for the application"
+    required: true
+
+runs:
+  using: node20
+  main: dist/index.js
