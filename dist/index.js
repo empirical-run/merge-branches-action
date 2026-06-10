@@ -29223,7 +29223,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(2186));
 const github = __importStar(__nccwpck_require__(5438));
-(async function run() {
+void (async function run() {
     try {
         const authKey = core.getInput("auth-key");
         if (!authKey) {
@@ -29261,8 +29261,9 @@ const github = __importStar(__nccwpck_require__(5438));
         }
     }
     catch (error) {
-        if (error instanceof Error)
+        if (error instanceof Error) {
             core.setFailed(error.message);
+        }
     }
 })();
 

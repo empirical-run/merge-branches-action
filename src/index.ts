@@ -1,7 +1,7 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 
-(async function run(): Promise<void> {
+void (async function run(): Promise<void> {
   try {
     const authKey = core.getInput("auth-key");
     if (!authKey) {
@@ -50,6 +50,8 @@ import * as github from "@actions/github";
       console.log("Merge branches request successful");
     }
   } catch (error) {
-    if (error instanceof Error) core.setFailed(error.message);
+    if (error instanceof Error) {
+      core.setFailed(error.message);
+    }
   }
 })();
