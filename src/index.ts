@@ -1,6 +1,9 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 
+const mergeBranchesUrl =
+  "https://api.empirical.run/api/projects/merge-branches";
+
 void (async function run(): Promise<void> {
   try {
     const authKey = core.getInput("auth-key");
@@ -28,30 +31,39 @@ void (async function run(): Promise<void> {
       `Merging branch '${headBranch}' into '${baseBranch}' in Empirical test repository`,
     );
 
-    const response = await fetch(
-      "https://dash.empirical.run/api/projects/merge-branches",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authKey}`,
-        },
-        body: JSON.stringify({
-          base_branch: baseBranch,
-          head_branch: headBranch,
-        }),
+    const response = await fetch(mergeBranchesUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authKey}`,
       },
-    );
+      body: JSON.stringify({
+        base_branch: baseBranch,
+        head_branch: headBranch,
+      }),
+    });
 
-    const content = await response.text();
+    const content = (await response.text()).trim();
     if (!response.ok) {
-      core.setFailed(`Merge branches API failed: ${content}`);
+      const status = `${response.status} ${response.statusText || "Unknown status"}`;
+      const finalUrl = response.url || mergeBranchesUrl;
+      core.setFailed(
+        [
+          `Merge branches API failed (${status})`,
+          `Request: POST ${mergeBranchesUrl}`,
+          ...(finalUrl === mergeBranchesUrl
+            ? []
+            : [`Final URL after redirects: ${finalUrl}`]),
+          `Response: ${content || "<empty response body>"}`,
+        ].join("\n"),
+      );
     } else {
       console.log("Merge branches request successful");
     }
   } catch (error) {
-    if (error instanceof Error) {
-      core.setFailed(error.message);
-    }
+    const message = error instanceof Error ? error.message : String(error);
+    core.setFailed(
+      `Merge branches request failed before receiving a response from ${mergeBranchesUrl}: ${message}`,
+    );
   }
 })();

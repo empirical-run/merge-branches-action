@@ -29223,6 +29223,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(2186));
 const github = __importStar(__nccwpck_require__(5438));
+const mergeBranchesUrl = "https://api.empirical.run/api/projects/merge-branches";
 void (async function run() {
     try {
         const authKey = core.getInput("auth-key");
@@ -29241,7 +29242,7 @@ void (async function run() {
             return;
         }
         console.log(`Merging branch '${headBranch}' into '${baseBranch}' in Empirical test repository`);
-        const response = await fetch("https://dash.empirical.run/api/projects/merge-branches", {
+        const response = await fetch(mergeBranchesUrl, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -29252,18 +29253,26 @@ void (async function run() {
                 head_branch: headBranch,
             }),
         });
-        const content = await response.text();
+        const content = (await response.text()).trim();
         if (!response.ok) {
-            core.setFailed(`Merge branches API failed: ${content}`);
+            const status = `${response.status} ${response.statusText || "Unknown status"}`;
+            const finalUrl = response.url || mergeBranchesUrl;
+            core.setFailed([
+                `Merge branches API failed (${status})`,
+                `Request: POST ${mergeBranchesUrl}`,
+                ...(finalUrl === mergeBranchesUrl
+                    ? []
+                    : [`Final URL after redirects: ${finalUrl}`]),
+                `Response: ${content || "<empty response body>"}`,
+            ].join("\n"));
         }
         else {
             console.log("Merge branches request successful");
         }
     }
     catch (error) {
-        if (error instanceof Error) {
-            core.setFailed(error.message);
-        }
+        const message = error instanceof Error ? error.message : String(error);
+        core.setFailed(`Merge branches request failed before receiving a response from ${mergeBranchesUrl}: ${message}`);
     }
 })();
 
