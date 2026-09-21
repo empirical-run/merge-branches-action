@@ -16,18 +16,21 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npx ncc build src/index.ts -o dist",
+    "build": "npm run gen:api-worker-openapi && npx ncc build src/index.ts -o dist",
     "dev": "npm run build -- --watch",
-    "typecheck": "tsgo --noEmit"
+    "gen:api-worker-openapi": "openapi-typescript ../../apps/api-worker/openapi/openapi.internal.json -o src/generated/api-worker-openapi.ts",
+    "typecheck": "npm run gen:api-worker-openapi && tsgo --noEmit"
   },
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.10.1",
-    "@actions/github": "^6.0.0"
+    "@actions/github": "^6.0.0",
+    "openapi-fetch": "0.14.1"
   },
   "devDependencies": {
     "@types/node": "^22",
     "@vercel/ncc": "^0.38.1",
+    "openapi-typescript": "7.6.1",
     "typescript": "^5.4.5"
   }
 }

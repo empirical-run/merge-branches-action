@@ -1,8 +1,17 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
+import createClient from "openapi-fetch";
+import type { paths } from "./generated/api-worker-openapi";
 
-const mergeBranchesUrl =
-  "https://api.empirical.run/api/projects/merge-branches";
+const apiWorkerUrl = "https://api.empirical.run";
+const mergeBranchesPath = "/api/projects/merge-branches";
+
+function formatApiError(error: unknown): string {
+  if (error == null) {
+    return "";
+  }
+  return typeof error === "string" ? error : JSON.stringify(error);
+}
 
 void (async function run(): Promise<void> {
   try {
@@ -31,30 +40,31 @@ void (async function run(): Promise<void> {
       `Merging branch '${headBranch}' into '${baseBranch}' in Empirical test repository`,
     );
 
-    const response = await fetch(mergeBranchesUrl, {
-      method: "POST",
+    const client = createClient<paths>({
+      baseUrl: apiWorkerUrl,
       headers: {
-        "Content-Type": "application/json",
         Authorization: `Bearer ${authKey}`,
       },
-      body: JSON.stringify({
+    });
+    const { error, response } = await client.POST(mergeBranchesPath, {
+      body: {
         base_branch: baseBranch,
         head_branch: headBranch,
-      }),
+      },
     });
 
-    const content = (await response.text()).trim();
     if (!response.ok) {
       const status = `${response.status} ${response.statusText || "Unknown status"}`;
-      const finalUrl = response.url || mergeBranchesUrl;
+      const requestUrl = `${apiWorkerUrl}${mergeBranchesPath}`;
+      const finalUrl = response.url || requestUrl;
       core.setFailed(
         [
           `Merge branches API failed (${status})`,
-          `Request: POST ${mergeBranchesUrl}`,
-          ...(finalUrl === mergeBranchesUrl
+          `Request: POST ${requestUrl}`,
+          ...(finalUrl === requestUrl
             ? []
             : [`Final URL after redirects: ${finalUrl}`]),
-          `Response: ${content || "<empty response body>"}`,
+          `Response: ${formatApiError(error) || "<empty response body>"}`,
         ].join("\n"),
       );
     } else {
@@ -63,7 +73,7 @@ void (async function run(): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     core.setFailed(
-      `Merge branches request failed before receiving a response from ${mergeBranchesUrl}: ${message}`,
+      `Merge branches request failed before receiving a response from ${apiWorkerUrl}${mergeBranchesPath}: ${message}`,
     );
   }
 })();
