@@ -2417,7 +2417,7 @@ export interface paths {
         };
         /**
          * ⚙️ List branches the sandbox may not push to
-         * @description Returns the project's default branch and the chat session's base branch. The sandbox git proxy blocks pushes to these. The session is derived from the sandbox-delegation principal.
+         * @description Returns the project's configured protected branches. The sandbox git proxy blocks pushes to these. The session is derived from the sandbox-delegation principal.
          */
         get: operations["getChatSessionSandboxProtectedBranches"];
         put?: never;
@@ -6290,6 +6290,8 @@ export interface components {
             repo_host: "github" | "pierre_code_storage";
             /** @description Default branch of the repository. */
             default_branch: string;
+            /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
+            protected_branches: string[];
             /** @description Whether email reporting is enabled. */
             has_email_reporting: boolean | null;
             /**
@@ -6346,6 +6348,8 @@ export interface components {
                 repo_host: "github" | "pierre_code_storage";
                 /** @description Default branch of the repository. */
                 default_branch: string;
+                /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
+                protected_branches: string[];
                 /** @description Whether email reporting is enabled. */
                 has_email_reporting: boolean | null;
                 /**
@@ -6591,6 +6595,8 @@ export interface components {
                 repo_host: "github" | "pierre_code_storage";
                 /** @description Default branch of the repository. */
                 default_branch: string;
+                /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
+                protected_branches: string[];
                 /** @description Whether email reporting is enabled. */
                 has_email_reporting: boolean | null;
                 /**
@@ -10073,18 +10079,16 @@ export interface components {
             environment: string;
             /** @description Build information to associate with the test run. */
             build?: {
-                /** @description Deprecated. URL of the deployed build being tested. Passed to tests as the `BUILD_URL` environment variable, unless `BUILD_URL` is set in `environment_variables_overrides`. Set `BUILD_URL` there directly instead. */
-                url?: string;
                 /** @description Git branch name of the build. */
                 branch?: string;
                 /** @description Git commit SHA of the build. */
                 commit?: string;
-                /** @description URL to the commit (e.g., GitHub commit link). */
-                commit_url?: string;
                 /** @description Source repository in owner/name format (e.g., acme/web). */
                 repo?: string;
-                /** @description Version string of the build. */
-                version?: string;
+                /** @description Legacy commit URL accepted only to infer build.repo for older callers. */
+                commit_url?: string;
+                /** @description Legacy build URL forwarded as BUILD_URL for allowlisted projects. */
+                url?: string;
             };
             /** @description Custom key-value pairs to associate with the test run. Values must be strings or numbers. */
             metadata?: {
@@ -11041,7 +11045,6 @@ export interface components {
                 build_url: string | null;
                 build_branch: string | null;
                 commit: string | null;
-                commit_url: string | null;
                 repo: string | null;
                 error_code: string | null;
                 cancellation_reason: string | null;
@@ -11414,8 +11417,6 @@ export interface components {
             commit: string | null;
             /** @description Build branch name. */
             branch: string | null;
-            /** @description URL of the build commit. */
-            commit_url: string | null;
             /** @description Build repository in `org/repo` form. */
             repo: string | null;
             /** @description Git branch of the build. */
@@ -24071,6 +24072,7 @@ export interface operations {
                     name?: string;
                     has_email_reporting?: boolean;
                     default_branch?: string;
+                    protected_branches?: string[];
                     /**
                      * @deprecated
                      * @description Read-only. Set `concurrency` on the trigger request or `scheduled_concurrency` on the environment instead.
