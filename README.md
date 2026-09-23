@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Merge branches in Empirical
-        uses: empirical-run/merge-branches-action@main
+        uses: empirical-run/merge-branches-action@v1
         with:
           auth-key: ${{ secrets.EMPIRICALRUN_KEY }}
 ```
@@ -27,6 +27,12 @@ jobs:
 ## Inputs
 
 - **auth-key** (required): Authentication key for the Empirical API. Store this as a GitHub secret.
+
+## Versioning
+
+Use `@v1` to receive backwards-compatible fixes without automatically adopting
+breaking releases. Pin an exact version such as `@v1.0.0` when you need an
+unchanging release reference.
 
 ## How it works
 
