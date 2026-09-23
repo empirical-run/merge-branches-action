@@ -161,7 +161,7 @@ export interface paths {
         };
         /**
          * 🤖 List Slack share targets for a run
-         * @description Lists Slack destinations for sharing this run's triage content: reply targets for channels with an existing run notification thread, plus subscribed channels for a new message.
+         * @description Lists Slack destinations for sharing this run's triage content: reply targets for channels with an existing run notification thread, plus active channels accessible to the project's organization for a new message.
          */
         get: operations["listTestRunShareTargets"];
         put?: never;
@@ -443,7 +443,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * ⚙️ Get a test run's delegated triage session
+         * @description Returns the newest delegated triage session whose source exactly matches the test run. Per-test fix sessions are excluded.
+         */
+        get: operations["getTestRunTriageSession"];
         put?: never;
         /**
          * ⚙️ Delegate a test run to triage
@@ -1071,46 +1075,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/slack/link": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Slack /empirical slash command
-         * @description Handles the /empirical slash command directly from Slack (verified by the Slack request signature): opens the project-subscription modal or returns usage text. Responds with text/plain — a non-empty body is shown to the invoking user; an empty body means a modal opened.
-         */
-        post: operations["slackLinkWebhook"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/slack/channels": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 🤖 List Slack channels
-         * @description Lists the Slack channel subscriptions for the scoped project, optionally validated against Slack.
-         */
-        get: operations["listSlackChannels"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/slack/files/{file_id}": {
         parameters: {
             query?: never;
@@ -1235,7 +1199,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/slack/channels/{id}": {
+    "/api/v2/slack/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🤖 🧪 List canonical Slack channels
+         * @description Lists active Slack channels registered for the scoped project's organization. Reporter configuration is intentionally not part of this resource.
+         */
+        get: operations["listSlackChannelsV2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/slack/channels/{id}/refresh": {
         parameters: {
             query?: never;
             header?: never;
@@ -1244,19 +1228,35 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
         /**
-         * ⚙️ Delete a Slack channel
-         * @description Removes a Slack channel subscription from the project.
+         * 🤖 🧪 Refresh a canonical Slack channel's name
+         * @description Re-reads the channel from Slack and stores its current name when it changed. The canonical channel ID is stable, so environment reporter configs are unaffected. Access problems are reported in the validation result rather than as an error.
          */
-        delete: operations["deleteSlackChannel"];
+        post: operations["refreshSlackChannelV2"];
+        delete?: never;
         options?: never;
         head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/slack/channels/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         /**
-         * ⚙️ Update a Slack channel
-         * @description Updates a Slack channel subscription's environment filter settings.
+         * 🤖 🧪 Validate canonical Slack channels
+         * @description Checks every active channel registered for the scoped project's organization against Slack. Validation is read-only and verifies bot access and the stored channel name.
          */
-        patch: operations["updateSlackChannel"];
+        get: operations["validateSlackChannelsV2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/slack/teams": {
@@ -2268,46 +2268,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/chat-sessions/{id}/sandbox/files": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * ⚙️ List sandbox files
-         * @description Walks the sandbox file tree under `path` (default /repo). Super-admin only.
-         */
-        get: operations["listChatSessionSandboxFiles"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/chat-sessions/{id}/sandbox/files/content": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * ⚙️ Read a sandbox file
-         * @description Reads a single sandbox file as text or an inline image data URI. Super-admin only.
-         */
-        get: operations["getChatSessionSandboxFileContent"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/chat-sessions/{id}/sandbox/health": {
         parameters: {
             query?: never;
@@ -2342,26 +2302,6 @@ export interface paths {
          * @description Forwards a sandbox lifecycle event (crashed/destroyed) to the session Durable Object. Internal/TOTP callers only.
          */
         post: operations["applyChatSessionSandboxLifecycle"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/chat-sessions/{id}/sandbox/session-file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * ⚙️ Download the agent session file
-         * @description Streams the sandbox agent's session.jsonl as a file download.
-         */
-        get: operations["getChatSessionSandboxSessionFile"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2651,7 +2591,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Share a failure group's diagnosis
-         * @description Posts this group's diagnosis to a chosen Slack destination, with a link back to the failure group. The diagnosis and header are read from the stored group, never the client. A thread reply must belong to a run in this project; a new message must target a subscribed channel.
+         * @description Posts this group's diagnosis to a chosen Slack destination, with a link back to the failure group. The diagnosis and header are read from the stored group, never the client. A thread reply must belong to a run in this project; the channel must be accessible to the project's organization.
          */
         post: operations["shareFailureGroup"];
         delete?: never;
@@ -2714,6 +2654,26 @@ export interface paths {
          * @description Receives a GitHub admin App webhook directly from GitHub, verified by the webhook signature. The admin App subscribes to no events today; this acknowledges deliveries (including GitHub's `ping` handshake).
          */
         post: operations["receiveAdminGithubEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search repository branches
+         * @description Searches branch names server-side through GitHub and returns a bounded result set.
+         */
+        get: operations["searchRepositoryBranches"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2924,6 +2884,26 @@ export interface paths {
          * @description Returns the chat session whose review sheet should display this pull request.
          */
         get: operations["getPullRequestReviewTarget"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github/reporter-app/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ List reporter deliveries
+         * @description Lists the check runs and PR comments the reporter App delivered for a project, newest first. Each row is the latest state of one check run (per test run) or one PR comment (per PR + environment).
+         */
+        get: operations["listReporterDeliveries"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4409,7 +4389,7 @@ export interface paths {
         };
         /**
          * ⚙️ List recent branches
-         * @description Lists recent branches with test-run activity and persistent-branch diffs.
+         * @description Lists recent branches with test-run activity.
          */
         get: operations["listProjectBranches"];
         put?: never;
@@ -6310,10 +6290,6 @@ export interface components {
             repo_host: "github" | "pierre_code_storage";
             /** @description Default branch of the repository. */
             default_branch: string;
-            /** @description Whether branching is enabled. */
-            has_branching_enabled: boolean | null;
-            /** @description Branches kept across runs. */
-            persistent_branches: string[];
             /** @description Whether email reporting is enabled. */
             has_email_reporting: boolean | null;
             /**
@@ -6370,10 +6346,6 @@ export interface components {
                 repo_host: "github" | "pierre_code_storage";
                 /** @description Default branch of the repository. */
                 default_branch: string;
-                /** @description Whether branching is enabled. */
-                has_branching_enabled: boolean | null;
-                /** @description Branches kept across runs. */
-                persistent_branches: string[];
                 /** @description Whether email reporting is enabled. */
                 has_email_reporting: boolean | null;
                 /**
@@ -6494,15 +6466,13 @@ export interface components {
         ProjectBranchesResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Recent branches with run/status info. */
-                branches: components["schemas"]["BranchWithStatus"][];
+                /** @description Recent branches with test-run activity. */
+                branches: components["schemas"]["RecentBranch"][];
                 /** @description Total matching branches. */
                 total: number;
-                /** @description Configured persistent branches. */
-                persistent_branches: components["schemas"]["PersistentBranch"][];
             };
         };
-        BranchWithStatus: {
+        RecentBranch: {
             /** @description Branch name. */
             name: string;
             /** @description ID of the latest test run on the branch. */
@@ -6515,34 +6485,6 @@ export interface components {
             run_count: number;
             /** @description GitHub actor of the latest run. */
             latest_github_actor: string | null;
-            /** @description Branch status. */
-            status: string;
-            /** @description Diff vs the default branch, if the branch is persistent. */
-            diff: {
-                /** @description Commits ahead of default. */
-                ahead: number;
-                /** @description Commits behind default. */
-                behind: number;
-                /** @description Files changed vs default. */
-                files_changed: number;
-            } | null;
-            /** @description Always null (reserved). */
-            merge_request: unknown;
-        };
-        PersistentBranch: {
-            /** @description Branch name. */
-            name: string;
-            /** @description Whether the branch exists on GitHub. */
-            exists: boolean;
-            /** @description Diff vs the default branch, if it exists. */
-            diff: {
-                /** @description Commits ahead of default. */
-                ahead: number;
-                /** @description Commits behind default. */
-                behind: number;
-                /** @description Files changed vs default. */
-                files_changed: number;
-            } | null;
         };
         RepoExistsResponse: {
             /** @description Response payload. */
@@ -6649,10 +6591,6 @@ export interface components {
                 repo_host: "github" | "pierre_code_storage";
                 /** @description Default branch of the repository. */
                 default_branch: string;
-                /** @description Whether branching is enabled. */
-                has_branching_enabled: boolean | null;
-                /** @description Branches kept across runs. */
-                persistent_branches: string[];
                 /** @description Whether email reporting is enabled. */
                 has_email_reporting: boolean | null;
                 /**
@@ -6945,10 +6883,6 @@ export interface components {
             repo_host: "github" | "pierre_code_storage";
             /** @description Default branch name. */
             default_branch: string;
-            /** @description Whether branch-based environments are enabled. */
-            has_branching_enabled: boolean | null;
-            /** @description Branches kept warm/persistent. */
-            persistent_branches: string[];
             /** @description Whether email reporting is enabled. */
             has_email_reporting: boolean | null;
             /**
@@ -7747,6 +7681,24 @@ export interface components {
                  */
                 on_conflict: "cancel" | "wait";
             } | null;
+            /** @description Reporter configuration for runs in this environment. */
+            reporter_config: {
+                /**
+                 * @description Reporter config schema version. Always `1`.
+                 * @enum {number}
+                 */
+                schema_version: 1;
+                /** @description Reporters for this environment, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables notifications. */
+                reporters: {
+                    /**
+                     * @description Reporter kind. `slack_run_status` posts run status updates to Slack channels; it is the only kind accepted today.
+                     * @enum {string}
+                     */
+                    reporter_type: "slack_run_status";
+                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`, not the Slack `C…` channel id). Must belong to the project's organization and not be archived. Deduplicated and sorted on save. */
+                    slack_channel_ids: number[];
+                }[];
+            };
             /** @description ISO 8601 timestamp. */
             created_at: string | null;
             /** @description ISO 8601 timestamp. */
@@ -7779,6 +7731,24 @@ export interface components {
                  */
                 on_conflict: "cancel" | "wait";
             } | null;
+            /** @description Reporter configuration for the environment. Slack channel ids must be active registered channels of the project's organization (GET /api/v2/slack/channels). */
+            reporter_config?: {
+                /**
+                 * @description Reporter config schema version. Always `1`.
+                 * @enum {number}
+                 */
+                schema_version: 1;
+                /** @description Reporters for this environment, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables notifications. */
+                reporters: {
+                    /**
+                     * @description Reporter kind. `slack_run_status` posts run status updates to Slack channels; it is the only kind accepted today.
+                     * @enum {string}
+                     */
+                    reporter_type: "slack_run_status";
+                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`, not the Slack `C…` channel id). Must belong to the project's organization and not be archived. Deduplicated and sorted on save. */
+                    slack_channel_ids: number[];
+                }[];
+            };
         };
         EnvironmentSyncResponse: {
             /** @description Response payload. */
@@ -7817,6 +7787,24 @@ export interface components {
                  */
                 on_conflict: "cancel" | "wait";
             } | null;
+            /** @description Reporter configuration for the environment. Slack channel ids must be active registered channels of the project's organization (GET /api/v2/slack/channels). */
+            reporter_config?: {
+                /**
+                 * @description Reporter config schema version. Always `1`.
+                 * @enum {number}
+                 */
+                schema_version: 1;
+                /** @description Reporters for this environment, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables notifications. */
+                reporters: {
+                    /**
+                     * @description Reporter kind. `slack_run_status` posts run status updates to Slack channels; it is the only kind accepted today.
+                     * @enum {string}
+                     */
+                    reporter_type: "slack_run_status";
+                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`, not the Slack `C…` channel id). Must belong to the project's organization and not be archived. Deduplicated and sorted on save. */
+                    slack_channel_ids: number[];
+                }[];
+            };
         };
         EnvironmentDeleteResponse: {
             /** @description Always true on success. */
@@ -8142,84 +8130,6 @@ export interface components {
             success: boolean;
             /** @description Raw Slack auth.test result. */
             data?: unknown;
-        };
-        SlackChannelListResponse: {
-            /** @description Slack channels for the project. */
-            data: {
-                /** @description The project's Slack channels. */
-                channels: components["schemas"]["SlackChannel"][];
-            };
-        };
-        SlackChannel: {
-            /** @description Channel subscription ID. */
-            id: number;
-            /** @description Slack channel ID. */
-            channel_id: string;
-            /** @description Slack channel name. */
-            channel_name: string | null;
-            /** @description Slack workspace (team) ID. */
-            team_id: string | null;
-            /** @description Whether the channel filters by environment. */
-            is_env_specific: boolean | null;
-            /** @description Environments this channel is subscribed to. */
-            subscribed_environments: string[];
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 update timestamp. */
-            updated_at: string;
-            /** @description Slack validation result, present when requested. */
-            slack_channel_validation?: {
-                /** @description Whether the channel is usable. */
-                ok: boolean;
-                /** @description Slack channel ID. */
-                channel_id: string;
-                /** @description Whether the bot is a member of the channel. */
-                is_member?: boolean;
-                /** @description Machine-readable validation error code. */
-                error_code?: string;
-                /** @description Human-readable validation message. */
-                message?: string;
-            };
-        };
-        SlackChannelMutationResponse: {
-            /** @description Human-readable status message. */
-            message: string;
-            /** @description The updated channel. */
-            channel: {
-                /** @description Channel subscription ID. */
-                id: number;
-                /** @description Slack channel ID. */
-                channel_id: string;
-                /** @description Slack channel name. */
-                channel_name: string | null;
-                /** @description Slack workspace (team) ID. */
-                team_id: string | null;
-                /** @description Whether the channel filters by environment. */
-                is_env_specific: boolean | null;
-                /** @description Environments this channel is subscribed to. */
-                subscribed_environments: string[];
-                /** @description ISO 8601 creation timestamp. */
-                created_at: string;
-                /** @description ISO 8601 update timestamp. */
-                updated_at: string;
-                /** @description Slack validation result, present when requested. */
-                slack_channel_validation?: {
-                    /** @description Whether the channel is usable. */
-                    ok: boolean;
-                    /** @description Slack channel ID. */
-                    channel_id: string;
-                    /** @description Whether the bot is a member of the channel. */
-                    is_member?: boolean;
-                    /** @description Machine-readable validation error code. */
-                    error_code?: string;
-                    /** @description Human-readable validation message. */
-                    message?: string;
-                };
-            };
-        };
-        SlackChannelDeleteResponse: {
-            /** @description Human-readable status message. */
-            message: string;
         };
         SlackTeamListResponse: {
             /** @description Response payload. */
@@ -8566,6 +8476,8 @@ export interface components {
                         value: string | number | boolean | (string | number | boolean)[];
                     }[];
                     userIds: string[];
+                    /** @enum {string} */
+                    category?: "executor" | "user";
                 };
             };
         };
@@ -8930,46 +8842,17 @@ export interface components {
                 };
             };
         };
-        SandboxFilesList: {
-            /** @description Root path the tree was walked from. */
-            path: string;
-            /** @description Relative file paths under the root. */
-            paths: string[];
-        };
-        SandboxFilesError: {
-            /** @description Human-readable error message. */
-            error: string;
-            /** @description Path the walk was attempted on. */
-            path: string;
-        };
-        SandboxFileContent: {
-            /** @description Path of the file that was read. */
-            path: string;
-            /**
-             * @description Kind of content returned.
-             * @enum {string}
-             */
-            type: "image" | "text";
-            /** @description Data URI for image files (present when type is image). */
-            image_data?: string;
-            /** @description Decoded text content (present when type is text). */
-            content?: string;
-        };
-        SandboxFileContentError: {
-            /** @description Path of the requested file, or null. */
-            path: string | null;
-            /**
-             * @description Always 'error' for this response.
-             * @enum {string}
-             */
-            type: "error";
-            /** @description Human-readable error message. */
-            error: string;
-        };
         SubscribeChatSessionResponse: {
             data: {
                 already_waiting: boolean;
                 subscription_id?: number;
+            };
+        };
+        GithubBranchSearchResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Matching branch names, capped by `limit`. */
+                branches: string[];
             };
         };
         GithubCommitDiffResponse: {
@@ -9099,6 +8982,44 @@ export interface components {
                 /** @description The reporter App installation row. */
                 installation?: unknown;
             };
+        };
+        GhReporterDeliveriesResponse: {
+            /** @description Response payload. */
+            data: {
+                check_runs: components["schemas"]["GhReporterCheckRunDelivery"][];
+                pr_comments: components["schemas"]["GhReporterPrCommentDelivery"][];
+            };
+        };
+        GhReporterCheckRunDelivery: {
+            id: number;
+            test_run_id: number;
+            environment_name: string | null;
+            repo_owner: string;
+            repo_name: string;
+            head_sha: string | null;
+            /** @description Null when GitHub never accepted the check run. */
+            check_run_id: number | null;
+            check_run_url: string | null;
+            status: string | null;
+            conclusion: string | null;
+            /** @description Error from the most recent delivery attempt; cleared on success. */
+            last_error: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        GhReporterPrCommentDelivery: {
+            id: number;
+            environment_name: string | null;
+            repo_owner: string;
+            repo_name: string;
+            pr_number: number;
+            comment_id: number;
+            comment_url: string | null;
+            last_test_run_id: number | null;
+            last_status: string | null;
+            last_error: string | null;
+            created_at: string;
+            updated_at: string;
         };
         GhReporterWebhookAck: {
             /** @description Response payload. */
@@ -9831,6 +9752,94 @@ export interface components {
             environment_id: number | null;
             environment_name: string | null;
         };
+        SlackChannelListV2Response: {
+            data: {
+                channels: components["schemas"]["SlackChannelV2"][];
+            };
+        };
+        SlackChannelV2: {
+            /** @description Canonical Slack channel ID. */
+            id: number;
+            /** @description Organization scope ID. */
+            org_id: number;
+            /** @description Slack app installation ID, or null for the shared default installation. */
+            slack_app_install_id: number | null;
+            /**
+             * @description Credential source used to access the Slack workspace.
+             * @enum {string}
+             */
+            installation_source: "default" | "org";
+            /** @description Slack workspace (team) ID. */
+            team_id: string;
+            /** @description Slack channel ID. */
+            channel_id: string;
+            /** @description Last known Slack channel name. */
+            channel_name: string | null;
+            /** @description ISO 8601 archival timestamp. */
+            archived_at: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 update timestamp. */
+            updated_at: string;
+        };
+        SlackChannelValidationListV2Response: {
+            data: {
+                channels: components["schemas"]["ValidatedSlackChannelV2"][];
+            };
+        };
+        ValidatedSlackChannelV2: {
+            /** @description Canonical Slack channel ID. */
+            id: number;
+            /** @description Organization scope ID. */
+            org_id: number;
+            /** @description Slack app installation ID, or null for the shared default installation. */
+            slack_app_install_id: number | null;
+            /**
+             * @description Credential source used to access the Slack workspace.
+             * @enum {string}
+             */
+            installation_source: "default" | "org";
+            /** @description Slack workspace (team) ID. */
+            team_id: string;
+            /** @description Slack channel ID. */
+            channel_id: string;
+            /** @description Last known Slack channel name. */
+            channel_name: string | null;
+            /** @description ISO 8601 archival timestamp. */
+            archived_at: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 update timestamp. */
+            updated_at: string;
+            /** @description Live Slack validation result. */
+            slack_channel_validation: {
+                /** @description Whether the bot can read the channel and its stored name matches Slack. */
+                ok: boolean;
+                /** @description Slack channel ID. */
+                channel_id: string;
+                /** @description Whether the bot can read the channel through Slack. */
+                can_access: boolean;
+                /** @description Whether the bot can read the channel. */
+                is_member?: boolean;
+                /** @description Current channel name returned by Slack. */
+                current_channel_name?: string | null;
+                /** @description Whether the stored channel name matches Slack's current name. */
+                channel_name_matches?: boolean;
+                /** @description Machine-readable validation failure code. */
+                error_code?: string;
+                /** @description Human-readable validation result. */
+                message?: string;
+            };
+        };
+        SlackChannelRefreshV2Response: {
+            data: {
+                channel: components["schemas"]["ValidatedSlackChannelV2"];
+                /** @description Whether the stored channel name was replaced with Slack's current name. */
+                renamed: boolean;
+                /** @description Channel name stored before the refresh. */
+                previous_channel_name: string | null;
+            };
+        };
         TestCaseTagsResponse: {
             /** @description Distinct tags across the project's test cases. */
             tags: string[];
@@ -10010,6 +10019,8 @@ export interface components {
                     id: number;
                     /** @description Current state of the test run. */
                     state: string;
+                    /** @description Normalized error code when branch resolution or execution failed. */
+                    error_code: string | null;
                     /** @description Git branch being tested. */
                     test_run_branch: string;
                     /** @description ISO 8601 timestamp when the run was created. */
@@ -10023,6 +10034,36 @@ export interface components {
                          * @enum {string}
                          */
                         on_conflict: "cancel" | "wait";
+                    } | null;
+                    /** @description Requested, resolved, and executed test-repository code. */
+                    test_code: {
+                        requested: {
+                            branch: string;
+                            /** @enum {string} */
+                            source: "explicit" | "build" | "project_default" | "legacy";
+                            /** @enum {string} */
+                            if_missing: "error" | "use_default" | "create";
+                            merge_with_default: boolean;
+                        };
+                        resolved: {
+                            branch: string | null;
+                            sha: string | null;
+                            /** @enum {string|null} */
+                            fallback_reason: "requested_branch_missing" | null;
+                        };
+                        execution: {
+                            ref: string | null;
+                            sha: string | null;
+                            /** @enum {string|null} */
+                            ref_kind: "branch" | "temporary_merge" | null;
+                        };
+                        merge_base: {
+                            branch: string;
+                            sha: string | null;
+                        } | null;
+                        /** @enum {string} */
+                        resolution_status: "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
+                        resolution_error_code: string | null;
                     } | null;
                 };
             };
@@ -10060,8 +10101,12 @@ export interface components {
             tags?: string[];
             /** @description Specific test case ids (Playwright per-project `test.id`) to run. Only these tests will be executed. */
             test_case_ids?: string[];
-            /** @description Test repo branch to run. Useful for running tests from a feature branch before merging. Cannot be used together with `build` — pick one. */
+            /** @description Existing test-repository branch to run. A missing explicit branch creates an errored run; Empirical never creates it. May be supplied alongside `build`, which describes the application code under test. */
             branch?: string;
+            /** @description Use `build.branch` as the requested test-repository branch. Defaults to false. Projects migrated from the legacy Branching setting retain their previous same-as-build behavior when this field is omitted. If no matching test branch exists, the run falls back to the project default branch without creating a branch. Cannot be true together with `branch`. */
+            use_same_branch_as_build?: boolean;
+            /** @description Run a temporary merge preview of the resolved test branch into the project default branch. When omitted, the default is true for same-as-build selection and false for explicit-branch or project-default selection. No merge is needed when the resolved branch is already the default branch. Temporary `test-run/merge/*` refs are cleaned up after the run. */
+            merge_with_default?: boolean;
             /** @description Concurrency group and policy for this run. Runs in the same group (within the project) are limited to one in progress; `on_conflict` says what this run does when the group already has an active run: `cancel` cancels it and starts now, `wait` queues behind it (a newer waiting run replaces an older one). Omit to use the project's legacy concurrency setting; `null` for no limit. */
             concurrency?: {
                 /** @description Free-form group key, scoped to the project, e.g. `production`, `staging/acme/web@feat-x`, or a build URL. */
@@ -10347,7 +10392,7 @@ export interface components {
             data: {
                 /** @description Reply targets for channels that already have a run notification thread. */
                 thread_targets: components["schemas"]["TriageShareTarget"][];
-                /** @description New-message targets for subscribed channels. */
+                /** @description New-message targets for active Slack channels accessible to the organization. */
                 channel_targets: components["schemas"]["TriageShareTarget"][];
             };
         };
@@ -10435,6 +10480,36 @@ export interface components {
             run_ended_at: string | null;
             /** @description URL to download the Playwright JSON report for this run. */
             summary_url: string | null;
+            /** @description Branch-resolution provenance. Null only for historical runs created before provenance was recorded. */
+            test_code: {
+                requested: {
+                    branch: string;
+                    /** @enum {string} */
+                    source: "explicit" | "build" | "project_default" | "legacy";
+                    /** @enum {string} */
+                    if_missing: "error" | "use_default" | "create";
+                    merge_with_default: boolean;
+                };
+                resolved: {
+                    branch: string | null;
+                    sha: string | null;
+                    /** @enum {string|null} */
+                    fallback_reason: "requested_branch_missing" | null;
+                };
+                execution: {
+                    ref: string | null;
+                    sha: string | null;
+                    /** @enum {string|null} */
+                    ref_kind: "branch" | "temporary_merge" | null;
+                };
+                merge_base: {
+                    branch: string;
+                    sha: string | null;
+                } | null;
+                /** @enum {string} */
+                resolution_status: "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
+                resolution_error_code: string | null;
+            } | null;
         };
         IngestTestCaseRunEndEventResponse: {
             /** @description Empty acknowledgement payload. */
@@ -10755,6 +10830,12 @@ export interface components {
             timestamp: number;
             /** @description Log line text. */
             message: string;
+        };
+        GetTestRunTriageSessionResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSession"] & unknown;
+            };
         };
         TestRunTriageSessionResponse: {
             /** @description Response payload. */
@@ -11275,6 +11356,36 @@ export interface components {
             test_run_branch: string;
             /** @description Head commit SHA of the test repo. */
             test_run_head_sha: string | null;
+            /** @description Structured test-code provenance. Null for runs created before provenance capture shipped. */
+            test_code: {
+                requested: {
+                    branch: string;
+                    /** @enum {string} */
+                    source: "explicit" | "build" | "project_default" | "legacy";
+                    /** @enum {string} */
+                    if_missing: "error" | "use_default" | "create";
+                    merge_with_default: boolean;
+                };
+                resolved: {
+                    branch: string | null;
+                    sha: string | null;
+                    /** @enum {string|null} */
+                    fallback_reason: "requested_branch_missing" | null;
+                };
+                execution: {
+                    ref: string | null;
+                    sha: string | null;
+                    /** @enum {string|null} */
+                    ref_kind: "branch" | "temporary_merge" | null;
+                };
+                merge_base: {
+                    branch: string;
+                    sha: string | null;
+                } | null;
+                /** @enum {string} */
+                resolution_status: "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
+                resolution_error_code: string | null;
+            } | null;
             /** @description URL of the Playwright JSON report. */
             summary_url: string | null;
             /** @description Whether reporters fire for this run. */
@@ -12232,7 +12343,7 @@ export interface operations {
                     "application/json": components["schemas"]["CreateTestRunResponse"];
                 };
             };
-            /** @description Invalid request, unknown environment, conflicting branch/build, pierre code-storage repo, or the project could not be resolved. */
+            /** @description Invalid request, unknown environment, conflicting branch selectors, pierre code-storage repo, or the project could not be resolved. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12308,7 +12419,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run ID. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -12397,7 +12508,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Database ID of the test run. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -12451,7 +12562,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Database ID of the test run. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -12538,7 +12649,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run ID. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -12579,7 +12690,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run ID. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -12665,7 +12776,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run identifier (database id or external run_id). */
+                /** @description External run_id of the test run. */
                 id: number;
             };
             cookie?: never;
@@ -12710,7 +12821,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Test run identifier (database id or external run_id). */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -12751,7 +12862,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run identifier (database id or external run_id). */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -12765,6 +12876,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TestRunManifestTestsResponse"];
+                };
+            };
+            /** @description Invalid database test run ID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Test run not found. */
@@ -12783,7 +12903,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run identifier (database id or external run_id). */
+                /** @description External run_id of the test run. */
                 id: number;
             };
             cookie?: never;
@@ -12905,7 +13025,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run identifier (database id or external run_id). */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -12919,6 +13039,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TestRunShardsResponse"];
+                };
+            };
+            /** @description Invalid database test run ID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Test run not found. */
@@ -13057,7 +13186,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run identifier (database id or external run_id). */
+                /** @description External run_id of the test run. */
                 id: number;
             };
             cookie?: never;
@@ -13089,7 +13218,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Database ID of the test run. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -13143,7 +13272,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run identifier (database id or external run_id). */
+                /** @description External run_id of the test run. */
                 id: number;
             };
             cookie?: never;
@@ -13179,12 +13308,53 @@ export interface operations {
             };
         };
     };
+    getTestRunTriageSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Test run database ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The newest triage session, if one exists. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GetTestRunTriageSessionResponse"];
+                };
+            };
+            /** @description Invalid database test run ID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Test run not found or inaccessible. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     createTestRunTriageSession: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Database ID of the test run. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -13198,6 +13368,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TestRunTriageSessionResponse"];
+                };
+            };
+            /** @description Invalid database test run ID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Test run not found or inaccessible. */
@@ -13216,7 +13395,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Database ID of the test run. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -13639,7 +13818,7 @@ export interface operations {
                     "application/json": components["schemas"]["EnvironmentResponse"];
                 };
             };
-            /** @description Invalid request, or the slug already exists. */
+            /** @description Invalid request, the slug already exists, or reporter_config names an unknown Slack channel id. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -13734,7 +13913,7 @@ export interface operations {
                     "application/json": components["schemas"]["Environment"];
                 };
             };
-            /** @description Invalid request, or the slug already exists. */
+            /** @description Invalid request, the slug already exists, or reporter_config names an unknown Slack channel id. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -14865,85 +15044,6 @@ export interface operations {
             };
         };
     };
-    slackLinkWebhook: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/x-www-form-urlencoded": {
-                    /** @description Slack channel ID. */
-                    channel_id: string;
-                    /** @description Slack channel name. */
-                    channel_name: string;
-                    /** @description Slack workspace (team) ID. */
-                    team_id: string;
-                    /** @description Slack trigger ID for opening a modal. */
-                    trigger_id: string;
-                    /**
-                     * @description Text passed to the /empirical slash command.
-                     * @default
-                     */
-                    text?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Slash command response shown to the invoking user; empty body when a modal was opened. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": string;
-                };
-            };
-            /** @description Invalid request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    listSlackChannels: {
-        parameters: {
-            query?: {
-                /** @description When `true`, validate each channel against Slack. */
-                validate_slack?: "true" | "false";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The project's Slack channels. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SlackChannelListResponse"];
-                };
-            };
-            /** @description Invalid request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     getSlackFileMetadata: {
         parameters: {
             query?: never;
@@ -15458,29 +15558,49 @@ export interface operations {
             };
         };
     };
-    deleteSlackChannel: {
+    listSlackChannelsV2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The organization's active Slack channels. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackChannelListV2Response"];
+                };
+            };
+        };
+    };
+    refreshSlackChannelV2: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Channel subscription ID. */
+                /** @description Canonical Slack channel ID. */
                 id: number;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The channel was deleted. */
+            /** @description The channel after the refresh, with live validation. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SlackChannelDeleteResponse"];
+                    "application/json": components["schemas"]["SlackChannelRefreshV2Response"];
                 };
             };
-            /** @description Invalid request. */
-            400: {
+            /** @description Channel not found in the scoped project's organization. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15488,72 +15608,24 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Channel not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @description Error message. */
-                        error: string;
-                    };
-                };
-            };
         };
     };
-    updateSlackChannel: {
+    validateSlackChannelsV2: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                /** @description Channel subscription ID. */
-                id: number;
-            };
+            path?: never;
             cookie?: never;
         };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /** @description Environments this channel is subscribed to. */
-                    subscribed_environments?: string[];
-                    /** @description Whether the channel filters by environment. */
-                    is_env_specific?: boolean;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description The updated channel. */
+            /** @description The organization's active Slack channels with live validation results. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SlackChannelMutationResponse"];
-                };
-            };
-            /** @description Invalid request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"] | {
-                        /** @description Error message. */
-                        error: string;
-                    };
-                };
-            };
-            /** @description Channel not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @description Error message. */
-                        error: string;
-                    };
+                    "application/json": components["schemas"]["SlackChannelValidationListV2Response"];
                 };
             };
         };
@@ -16511,7 +16583,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Test run ID. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -16552,7 +16624,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run ID. */
+                /** @description Test run database ID. */
                 id: number;
                 /** @description Playwright test ID (`pw_test_id`) of the case. */
                 case_id: string;
@@ -16919,7 +16991,7 @@ export interface operations {
                                 entity_type: string;
                                 /** @description Exact entity id, or null when this trigger matches every entity. */
                                 entity_id: string | null;
-                                /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog. */
+                                /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
                                 payload_filter: {
                                     [key: string]: string | number | boolean | unknown;
                                 };
@@ -16966,7 +17038,7 @@ export interface operations {
                     event_type: string;
                     /** @description Exact canonical entity id to match. Omit on create, or set null on update, to match every entity. */
                     entity_id?: string;
-                    /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog. */
+                    /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
                     payload_filter?: {
                         [key: string]: string | number | boolean | unknown;
                     };
@@ -16997,7 +17069,7 @@ export interface operations {
                             entity_type: string;
                             /** @description Exact entity id, or null when this trigger matches every entity. */
                             entity_id: string | null;
-                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog. */
+                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
                             payload_filter: {
                                 [key: string]: string | number | boolean | unknown;
                             };
@@ -17071,7 +17143,7 @@ export interface operations {
                             entity_type: string;
                             /** @description Exact entity id, or null when this trigger matches every entity. */
                             entity_id: string | null;
-                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog. */
+                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
                             payload_filter: {
                                 [key: string]: string | number | boolean | unknown;
                             };
@@ -17146,7 +17218,7 @@ export interface operations {
                     event_type?: string;
                     /** @description Exact canonical entity id to match. Omit on create, or set null on update, to match every entity. */
                     entity_id?: string | null;
-                    /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog. */
+                    /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
                     payload_filter?: {
                         [key: string]: string | number | boolean | unknown;
                     };
@@ -17177,7 +17249,7 @@ export interface operations {
                             entity_type: string;
                             /** @description Exact entity id, or null when this trigger matches every entity. */
                             entity_id: string | null;
-                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog. */
+                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
                             payload_filter: {
                                 [key: string]: string | number | boolean | unknown;
                             };
@@ -17837,6 +17909,8 @@ export interface operations {
                 page?: number;
                 /** @description Items per page. Default 10. */
                 per_page?: number;
+                /** @description Optional Manager sidebar category: executor sessions, or all non-manager/non-executor user-facing sessions. */
+                category?: "executor" | "user";
                 /** @description Comma-separated project IDs to include. */
                 project_ids?: string;
                 /** @description Comma-separated project IDs to exclude. */
@@ -18693,121 +18767,6 @@ export interface operations {
             };
         };
     };
-    listChatSessionSandboxFiles: {
-        parameters: {
-            query?: {
-                /** @description Absolute path inside the sandbox. */
-                path?: string;
-            };
-            header?: never;
-            path: {
-                /** @description Chat session ID. */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description File tree under the path. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxFilesList"];
-                };
-            };
-            /** @description File listing failed. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxFilesError"];
-                };
-            };
-            /** @description Forbidden. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxErrorMessage"];
-                };
-            };
-            /** @description Sandbox not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxErrorMessage"];
-                };
-            };
-        };
-    };
-    getChatSessionSandboxFileContent: {
-        parameters: {
-            query?: {
-                /** @description Absolute path inside the sandbox. */
-                path?: string;
-            };
-            header?: never;
-            path: {
-                /** @description Chat session ID. */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description File content. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxFileContent"];
-                };
-            };
-            /** @description Missing path. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxFileContentError"];
-                };
-            };
-            /** @description Forbidden. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxFileContentError"];
-                };
-            };
-            /** @description Not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxFileContentError"];
-                };
-            };
-            /** @description File too large. */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxFileContentError"];
-                };
-            };
-        };
-    };
     getChatSessionSandboxHealth: {
         parameters: {
             query?: never;
@@ -18840,6 +18799,15 @@ export interface operations {
             };
             /** @description Sandbox not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxErrorMessage"];
+                };
+            };
+            /** @description Sandbox is paused. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18907,56 +18875,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SandboxLifecycleResult"];
-                };
-            };
-        };
-    };
-    getChatSessionSandboxSessionFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Chat session ID. */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The session.jsonl file (served as a binary download). */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/octet-stream": string;
-                };
-            };
-            /** @description Invalid request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Sandbox not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxErrorMessage"];
-                };
-            };
-            /** @description Failed to read session file. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxErrorMessage"];
                 };
             };
         };
@@ -19807,6 +19725,62 @@ export interface operations {
             };
         };
     };
+    searchRepositoryBranches: {
+        parameters: {
+            query: {
+                /** @description Repository owner. */
+                owner: string;
+                /** @description Repository name. */
+                repo: string;
+                /** @description Branch-name search text. */
+                query?: string;
+                /** @description Maximum number of matching branches to return. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Matching repository branches. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubBranchSearchResponse"];
+                };
+            };
+            /** @description Repository access is blocked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Repository not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description GitHub rejected the branch search. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getCommitDiff: {
         parameters: {
             query: {
@@ -20354,6 +20328,49 @@ export interface operations {
                 };
             };
             /** @description Project, pull request, or owning session not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listReporterDeliveries: {
+        parameters: {
+            query: {
+                /** @description Project whose reporter deliveries to list. */
+                project_id: number;
+                /** @description Max rows per delivery kind (newest first). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reporter check runs and PR comments. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GhReporterDeliveriesResponse"];
+                };
+            };
+            /** @description Project does not belong to an org. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -24053,9 +24070,7 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     has_email_reporting?: boolean;
-                    has_branching_enabled?: boolean;
                     default_branch?: string;
-                    persistent_branches?: string[];
                     /**
                      * @deprecated
                      * @description Read-only. Set `concurrency` on the trigger request or `scheduled_concurrency` on the environment instead.
@@ -24174,8 +24189,6 @@ export interface operations {
                 per_page?: number;
                 /** @description Look-back window in days (max 365). */
                 days?: number;
-                /** @description Filter branches by status, or `all`. */
-                status?: string;
             };
             header?: never;
             path: {
@@ -25916,7 +25929,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run database identifier. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
@@ -25957,7 +25970,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Test run database identifier. */
+                /** @description Test run database ID. */
                 id: number;
             };
             cookie?: never;
