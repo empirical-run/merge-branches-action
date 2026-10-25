@@ -19,7 +19,7 @@
     "build": "npm run gen:api-worker-openapi && npx ncc build src/index.ts -o dist",
     "dev": "npm run build -- --watch",
     "gen:api-worker-openapi": "openapi-typescript ../../apps/api-worker/openapi/openapi.internal.json -o src/generated/api-worker-openapi.ts",
-    "typecheck": "npm run gen:api-worker-openapi && tsgo --noEmit"
+    "typecheck": "npm run gen:api-worker-openapi && tsc --noEmit"
   },
   "license": "MIT",
   "dependencies": {
