@@ -18,12 +18,12 @@ export interface paths {
         get: operations["listTestRuns"];
         /**
          * Trigger a test run
-         * @description Triggers a new end-to-end test run for the scoped project against the given environment, resolving the branch/build and dispatching the run.
+         * @description Triggers a new end-to-end test run for the scoped project, optionally with a saved environment, resolving the branch/build and dispatching the run.
          */
         put: operations["createTestRun"];
         /**
          * ⚙️ Update a test run's state
-         * @description Reports a run state transition from the run worker (looked up by repo name + run_id). Ingests the report summary on `ended`, applies the terminal-state guard, and fans out state-change effects.
+         * @description Reports a run state transition from the run worker (looked up by run_id). Ingests the report summary on `ended`, applies the terminal-state guard, and fans out state-change effects.
          */
         post: operations["updateTestRunState"];
         delete?: never;
@@ -152,7 +152,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/test-runs/{id}/share-targets": {
+    "/api/test-runs/{id}/chat-sessions": {
         parameters: {
             query?: never;
             header?: never;
@@ -160,10 +160,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 🤖 List Slack share targets for a run
-         * @description Lists Slack destinations for sharing this run's triage content: reply targets for channels with an existing run notification thread, plus active channels accessible to the project's organization for a new message.
+         * ⚙️ List a test run's chat sessions
+         * @description Every session linked to the run, most recently updated first, including closed ones. Each carries the tests it is scoped to. Only sessions created after links were introduced are returned.
          */
-        get: operations["listTestRunShareTargets"];
+        get: operations["listTestRunChatSessions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -204,6 +204,26 @@ export interface paths {
          * @description Returns the resolved environment variables for a run (global, environment-specific, then run overrides), addressed by its external run_id. Used by the test-run-worker.
          */
         get: operations["getTestRunEnvironmentVariables"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/test-runs/{id}/linked-changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ 🧪 Get linked test changes for a run
+         * @description For a run triggered by an app pull request, evaluates the same-name test branch live on GitHub (the state behind the "Empirical linked test changes" check) and returns the latest check written for the PR. Addressed by the database id. Serves the dashboard UI.
+         */
+        get: operations["getTestRunLinkedChanges"];
         put?: never;
         post?: never;
         delete?: never;
@@ -267,7 +287,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Store a test run's run manifest
-         * @description Stores the run manifest (scheduled tests) the run worker computed, keyed by the external run_id, and enqueues expected-duration enrichment.
+         * @description Stores the run manifest (scheduled tests) the run worker computed, keyed by the external run_id.
          */
         post: operations["createTestRunManifest"];
         delete?: never;
@@ -425,7 +445,7 @@ export interface paths {
         };
         /**
          * ⚙️ 🧪 Get test case durations for shard planning
-         * @description Returns the run's project's 7-day average duration per test case, keyed by the normalized 41-char Playwright test id, addressed by the run's external run_id. Used by the `run_setup` container to pack a shard plan: the analytics token is account-scoped and cannot be handed to a sandbox running customer test code, so the api-worker holds it and serves the numbers. Project-wide rather than per-run — the container filters to the tests it listed. A project with no history returns an empty object; a broken analytics query returns 503, so the container can tell the two apart and fall back rather than plan off nothing.
+         * @description Returns the run's project's 7-day and last-day average duration per test case (skipped results excluded), keyed by the normalized 41-char Playwright test id, addressed by the run's external run_id. Used by the `run_setup` container to pack a shard plan: the analytics token is account-scoped and cannot be handed to a sandbox running customer test code, so the api-worker holds it and serves the numbers. Project-wide rather than per-run — the container filters to the tests it listed. A project with no history returns an empty object; a broken analytics query returns 503, so the container can tell the two apart and fall back rather than plan off nothing.
          */
         get: operations["getTestRunTestCaseDurations"];
         put?: never;
@@ -943,6 +963,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/slack/admin/scope-refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🛡️ Complete a Slack scope refresh
+         * @description Exchanges the OAuth code from re-authorizing the Slack app on Empirical's own workspace, which applies newly requested scopes. The token is not stored. Super-admin only.
+         */
+        post: operations["refreshSlackAppScopes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/slack/auth-test": {
         parameters: {
             query?: never;
@@ -978,7 +1018,7 @@ export interface paths {
         put?: never;
         /**
          * 🛡️ Create or update a Slack install
-         * @description Creates a Slack app install for the org and team, or updates the existing one.
+         * @description Creates a Slack app install for the org and team, or updates the existing one. A signed-in user sends the OAuth code and api-worker exchanges it; installs into Empirical's own workspace are not stored.
          */
         post: operations["upsertSlackInstallation"];
         delete?: never;
@@ -1130,13 +1170,37 @@ export interface paths {
         put?: never;
         /**
          * 🤖 Post a Slack message
-         * @description Posts Markdown to a Slack channel/thread, or a recipient-addressed DM, as the Empirical bot. Provide exactly one of channel, slack_user_id, or user_id. Recipient sends create a new DM root and require idempotency_key. Channel sends use the channel and root timestamp coordinates the agent was given. Sandbox-delegated principals only; the channel must be one the calling project can reach. Registered-root replies are recorded and de-duplicated by idempotency key for the sending session. New roots are registered and bound to the sending session after posting; if delivery or registration is uncertain, check Slack before retrying.
+         * @description Posts Markdown to a Slack channel/thread, or a recipient-addressed DM, as the Empirical bot. Provide exactly one of channel, slack_user_id, or user_id. Recipient sends create a new DM root and require idempotency_key. Channel-wide mentions (<!channel>, <!here>, <!everyone>) are rejected; tag a subteam or users instead. Channel sends use the channel and root timestamp coordinates the agent was given. Sandbox-delegated principals only; the channel must be one the calling project can reach. Registered-root replies are recorded and de-duplicated by idempotency key for the sending session. New roots are registered and bound to the sending session after posting; if delivery or registration is uncertain, check Slack before retrying.
          */
         post: operations["slackSendMessage"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/slack/messages/{channel}/{ts}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 🤖 Delete a Slack message
+         * @description Deletes a message the calling project's agent posted with POST /api/slack/messages. Deleting a thread root leaves its replies in place under Slack's deleted-message placeholder. Sandbox-delegated principals only.
+         */
+        delete: operations["slackDeleteMessage"];
+        options?: never;
+        head?: never;
+        /**
+         * 🤖 Edit a Slack message
+         * @description Replaces the Markdown and buttons of a message the calling project's agent posted with POST /api/slack/messages. Messages whose input buttons were already selected cannot be edited. Channel-wide mentions are rejected. Sandbox-delegated principals only.
+         */
+        patch: operations["slackUpdateMessage"];
         trace?: never;
     };
     "/api/slack/proxy": {
@@ -1194,6 +1258,46 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/slack/threads/{id}/entity-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🤖 Link a Slack thread to an entity
+         * @description Associates a registered Slack thread with a test run or failure group in the scoped project, so `GET /api/slack/threads?entity_type=&entity_id=` finds it. Idempotent: relinking returns the existing link, and only `is_canonical: true` changes its canonical flag.
+         */
+        post: operations["createSlackThreadEntityLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/slack/threads/{id}/entity-links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 🤖 Unlink a Slack thread from an entity
+         * @description Removes an agent- or user-created entity link. System links (test-run notifications) cannot be removed.
+         */
+        delete: operations["deleteSlackThreadEntityLink"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1455,6 +1559,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List files
+         * @description Returns the project's files, newest first.
+         */
+        get: operations["listFiles"];
+        put?: never;
+        /**
+         * Create a file
+         * @description Registers a file and returns its link plus a presigned `upload_url`. PUT the file body to `upload_url` with the same `Content-Type` as `mime_type`; the link serves the file once the upload finishes.
+         */
+        post: operations["createFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a file
+         * @description Returns one of the project's files by ID.
+         */
+        get: operations["getFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Confirm a file upload
+         * @description Marks a file `uploaded` after its body was PUT to `upload_url`. Checks the content is in storage and records its size. Safe to repeat.
+         */
+        patch: operations["updateFile"];
+        trace?: never;
+    };
+    "/api/reporters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List reporters
+         * @description Lists the reporters a reporter config can name for the scoped project, with whether each can post: the organization's registered Slack channels, the GitHub check and PR comment with the repositories the GitHub Reporter app covers, the email report, and the run-only Slack DM to whoever starts the run (whose status depends on the caller). Use the Slack channel ids and repositories here when setting an environment's `reporter_config` or a run's `reporters`.
+         */
+        get: operations["listReporters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/resources": {
         parameters: {
             query?: never;
@@ -1464,12 +1636,14 @@ export interface paths {
         };
         /**
          * List resources
+         * @deprecated
          * @description Returns a paginated list of uploaded resources for the project.
          */
         get: operations["listProjectResources"];
         put?: never;
         /**
          * Create a resource
+         * @deprecated
          * @description Creates a resource. With `url`, creates a link-type file; otherwise creates a pending upload and returns a signed `upload_url` to stream the file into R2.
          */
         post: operations["createProjectResource"];
@@ -1488,6 +1662,7 @@ export interface paths {
         };
         /**
          * Get a resource
+         * @deprecated
          * @description Retrieves a single resource by ID, with a fresh download URL.
          */
         get: operations["getProjectResource"];
@@ -1495,6 +1670,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a resource
+         * @deprecated
          * @description Deletes a resource, removing its R2 object and stopping any active Drive watch.
          */
         delete: operations["deleteProjectResource"];
@@ -1502,6 +1678,7 @@ export interface paths {
         head?: never;
         /**
          * Update a resource
+         * @deprecated
          * @description Updates a resource's name/description, or confirms a pending upload with `status: "uploaded"`.
          */
         patch: operations["updateProjectResource"];
@@ -1516,11 +1693,13 @@ export interface paths {
         };
         /**
          * Download resource content
+         * @deprecated
          * @description Streams an uploaded resource's content from R2. Authorized by the signed capability URL (HMAC in the query string), not bearer auth.
          */
         get: operations["downloadResourceContent"];
         /**
          * Upload resource content
+         * @deprecated
          * @description Streams the request body into R2 for a pending resource. Authorized by the signed capability URL (HMAC in the query string), not bearer auth.
          */
         put: operations["uploadResourceContent"];
@@ -1549,6 +1728,58 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🧪 List tasks
+         * @description Returns a paginated list of tasks for the scoped project.
+         */
+        get: operations["listTasks"];
+        put?: never;
+        /**
+         * 🧪 Create a task
+         * @description Creates a task for the scoped project. Every task is owed to a person: `created_by` defaults to the signed-in user or, for an agent, the person who started its session. An agent acting for someone else, such as the person who asked in Slack, passes their user ID as `created_by`. Track your own follow-ups elsewhere; a task with no person behind it is rejected. It does not start a chat session; use `POST /api/tasks/{id}/chat-sessions` for that.
+         */
+        post: operations["createTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🧪 Get a task
+         * @description Retrieves a single task by ID.
+         */
+        get: operations["getTask"];
+        put?: never;
+        post?: never;
+        /**
+         * 🧪 Delete a task
+         * @description Permanently deletes a task.
+         */
+        delete: operations["deleteTask"];
+        options?: never;
+        head?: never;
+        /**
+         * 🧪 Update a task
+         * @description Updates a task's title, description, or status. A draft → open transition spawns a chat session.
+         */
+        patch: operations["updateTask"];
         trace?: never;
     };
     "/api/v1/telemetry/overlay-dismissals": {
@@ -1705,7 +1936,7 @@ export interface paths {
         put?: never;
         /**
          * 🤖 🧪 Create an event trigger
-         * @description Creates a trigger that resumes this session after the selected event occurs. Supply entity_id for an exact one-shot trigger, or omit it to match every entity; wildcard triggers may use recurring cardinality. Optional payload_filter fields must be allowed by the event catalog. Registration is edge-only and does not match historical events.
+         * @description Creates a trigger that resumes this session after the selected event occurs. Supply entity_id for an exact one-shot trigger, or omit it to match every entity; wildcard triggers may use recurring cardinality. Optional payload_filter fields must be allowed by the event catalog. Registration is edge-only and does not match historical events, so an exact trigger on a test run that already finished is rejected with 409.
          */
         post: operations["createChatSessionTrigger"];
         delete?: never;
@@ -1733,6 +1964,106 @@ export interface paths {
         patch: operations["updateChatSessionTrigger"];
         trace?: never;
     };
+    "/api/failure-groups/{id}/matcher-overlap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🤖 Check a matcher against other groups' members
+         * @description Runs a candidate matcher source for this group against the 2 most recently seen active members of every other open group in the project (round-robin, at most 40 cases) and reports the ones it returns true for. A claim means the matcher overlaps that group. Nothing is persisted.
+         */
+        post: operations["checkFailureGroupMatcherOverlap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failure-groups/{id}/members/{test_case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 🤖 Detach a test from a failure group
+         * @description Records that this test does not belong to the group. Detaching as an agent is a correction the agent may undo by attaching again. A human detach is sticky: agent attaches will not re-attach the test; only a later human attach supersedes it.
+         */
+        delete: operations["detachFailureGroupMember"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failure-groups/match": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🤖 Run failure-group matchers against a case
+         * @description Runs every open group's matcher (or the given group_ids, or one dry-run source) against a failed or flaky case and reports which returned true. Nothing is persisted: attach the case with POST /{id}/members. Matchers run in an isolated Worker with network limited to report storage, under a per-matcher time limit and the isolate's memory and CPU limits.
+         */
+        post: operations["matchFailureGroups"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github/pr/convert-to-draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🤖 Convert a pull request to draft
+         * @description Converts an open pull request to a draft, so it cannot be merged until it is marked ready for review.
+         */
+        post: operations["convertPullRequestToDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github/pr/ready-for-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🤖 Mark a pull request ready for review
+         * @description Converts an open draft pull request to ready for review.
+         */
+        post: operations["markPullRequestReadyForReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/github/proxy": {
         parameters: {
             query?: never;
@@ -1744,7 +2075,7 @@ export interface paths {
         put?: never;
         /**
          * 🤖 Proxy a GitHub API request
-         * @description Forwards an authenticated request to the GitHub API via the main App installation and returns the GitHub response verbatim. Sandbox-delegation principals are additionally constrained by per-session proxy rules.
+         * @description Forwards an authenticated request to the GitHub API and returns the GitHub response verbatim. The request's project (bound token, or the `x-project-id`/`x-project-slug` header) picks the GitHub App: its own repo goes through the main App; another repo the project's org installed the reporter App on is read through the reporter App, and writes to it are rejected. Without a project, the main App is used. Merging a pull request with `merge_method` `squash` or `rebase` is rejected; only merge commits are allowed, and creating a draft pull request is rejected. Other writes to a project's default or protected branches are refused, as git-worker refuses the equivalent push. Project API keys are read-only. Sandbox-delegation principals are additionally constrained by per-session proxy rules.
          */
         post: operations["githubProxy"];
         delete?: never;
@@ -1807,6 +2138,46 @@ export interface paths {
         get: operations["listPlaywrightVersions"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traces/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🤖 🧪 Compare a failed attempt with a passing one, step by step
+         * @description Aligns the steps of a case's failed attempt with a passing attempt of the same test (the dashboard's Compare tab) and returns where they diverge: the step it failed on, steps that ran only on one side, steps that got much slower, and optionally the page as each side left that step.
+         */
+        post: operations["compareTraceAgainstPass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traces/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🤖 Run a trace-utils function on a case's trace
+         * @description Calls one trace-utils function on the trace of a run's case (by default its last attempt with a trace) and returns the result. The trace is read in an isolated Worker with ranged reads; nothing is downloaded or stored.
+         */
+        post: operations["queryTrace"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1946,6 +2317,206 @@ export interface paths {
         patch: operations["updateApiKey"];
         trace?: never;
     };
+    "/api/banners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ List the dashboard's warning banners
+         * @description The warnings shown at the top of the dashboard for the scoped project's org (unpaid invoices, failed renewal, usage limit, no plan, Jira and Slack reconnects). Reads stored state only, so it is cheap enough to call while server-rendering a page.
+         */
+        get: operations["listDashboardBanners"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/month-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ Get the org's usage and cost for a usage period
+         * @description Org-wide usage across all of the scoped project's org projects, against the plan in effect: per-meter usage, overage so far, a period-end projection, and the usage limit. The period is a UTC calendar month, or the billing cycle for an org on a live Dodo subscription.
+         */
+        get: operations["getBillingMonthSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/periods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ List the org's usage periods
+         * @description The org's usage periods up to the current one, latest first: billing cycles back to the subscription start for an org on a live Dodo subscription, calendar months otherwise and before that.
+         */
+        get: operations["listBillingPeriods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/subscription/{subscription_id}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ 🧪 Compare a subscription's usage with Dodo's events
+         * @description Compares our usage rows with the usage events Dodo has for the subscription's customer in one billing cycle, matched by event id: per-meter totals, plus events missing from Dodo, Dodo events with no usage row, and events whose quantity changed. Read-only; sends nothing. Defaults to the current cycle; a past cycle is named by its end (its renewal date) and starts a month earlier unless cycle_start is given.
+         */
+        get: operations["reconcileSubscriptionUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/subscription/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🛡️ 🧪 Start a Dodo checkout for the org's plan
+         * @description Creates a Dodo hosted checkout that subscribes the scoped project's org to the current Dodo plan (the newest active shared plan with a Dodo product). For orgs without a plan that are not billed in INR. The plan takes effect when Dodo confirms the subscription by webhook.
+         */
+        post: operations["createSubscriptionCheckout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/subscription/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🛡️ 🧪 End the org's plan now
+         * @description Ends the scoped project's org's Dodo subscription now, with no undo: sends Dodo the usage it is missing, then cancels the subscription, or pauses it when the cycle has usage beyond the plan's allowance (Dodo charges it on pausing; a cron cancels the subscription once that charge succeeds). The plan ends at once, and the org can subscribe again. Emails the org's members and billing contacts. For an active or past-due subscription; an on-hold one must pay first.
+         */
+        post: operations["endSubscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/subscription/offer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ 🧪 Get the plan the org can subscribe to
+         * @description Whether the scoped project's org can start a Dodo checkout now (same rules as the checkout endpoint), and the plan's terms if so. The billing page uses it to show its Continue to payment button.
+         */
+        get: operations["getSubscriptionOffer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/subscription/portal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🛡️ 🧪 Open the org's Dodo billing portal
+         * @description Creates a Dodo customer portal session for the scoped project's org, where the customer updates their card and downloads Dodo's invoices. A new session per call; nothing is stored. For orgs that have subscribed through Dodo.
+         */
+        post: operations["createSubscriptionPortalSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/usage-limit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 🛡️ Set or remove the org's usage limit
+         * @description Sets the most overage the org allows per usage month, in whole dollars as cents, or removes the limit with null. Takes effect right away: a limit at or below this month's overage pauses new work.
+         */
+        put: operations["setUsageLimit"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/usage-limit/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ List the usage limit's history
+         * @description Changes to the org's usage limit and the alerts and blocks it caused, newest first.
+         */
+        get: operations["listUsageLimitEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat-sessions": {
         parameters: {
             query?: never;
@@ -1961,7 +2532,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Create a chat session
-         * @description Creates a chat session in the scoped project and delivers its first message (awaited, so the 201 means the message landed).
+         * @description Creates a chat session in the scoped project for a Hive agent (`agent`, default `main`) and delivers its first message (awaited, so the 201 means the message landed). An agent or version Hive does not serve is rejected with a 400, and an organization that billing blocks with a 402, before anything is created.
          */
         post: operations["createChatSession"];
         delete?: never;
@@ -2103,7 +2674,7 @@ export interface paths {
         };
         /**
          * ⚙️ Get a cumulative diff
-         * @description Returns the cumulative diff from the session's base branch to the given head SHA.
+         * @description Returns the cumulative diff from the project's default branch to the given head SHA.
          */
         get: operations["getChatSessionCumulativeDiff"];
         put?: never;
@@ -2126,6 +2697,26 @@ export interface paths {
          * @description Returns a diff for one explicitly selected registered branch or pull request. Exactly one of branch or pr_number is required.
          */
         get: operations["getChatSessionDiff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat-sessions/{id}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ 🧪 Get session log entries by log_seq range
+         * @description Returns the full log entries (tool arguments, results and media refs) between two log_seq values, for expanding a transcript row.
+         */
+        get: operations["getChatSessionEntryRange"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2240,6 +2831,26 @@ export interface paths {
          * @description Returns live sandbox logs when available, falling back to R2 logs drained during sandbox cleanup.
          */
         get: operations["getChatSessionSandboxLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat-sessions/{id}/sandbox/commits/{sha}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ 🧪 Get a commit from the sandbox
+         * @description Reads a commit's message, line stats and (optionally) diff from the attached sandbox's repository. Works for commits that have not been pushed; requires a running sandbox.
+         */
+        get: operations["getChatSessionSandboxCommit"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2368,7 +2979,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/chat-sessions/analytics/combined": {
+    "/api/chat-sessions/{id}/transcript": {
         parameters: {
             query?: never;
             header?: never;
@@ -2376,10 +2987,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * ⚙️ Combined chat-session analytics
-         * @description Returns the caller's own and overall chat-session creation/merge charts. Super admins see global stats; other users are scoped to their orgs.
+         * ⚙️ 🧪 Get a session's transcript rows
+         * @description Returns the whole session as display rows (messages, condensed tool runs, cards), each with the log_seq range it covers. Tool arguments and results are not included; read them from the entries in a row's seq range.
          */
-        get: operations["getChatSessionCombinedAnalytics"];
+        get: operations["getChatSessionTranscript"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2437,12 +3048,80 @@ export interface paths {
         };
         /**
          * ⚙️ List chat-session creators
-         * @description Returns the distinct users who created chat sessions in scope, enriched with Supabase user details.
+         * @description Returns the distinct users who created chat sessions in scope that were updated in the last 30 days, enriched with Supabase user details.
          */
         get: operations["listChatSessionUsers"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/credit-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ List an organisation's credit grants
+         * @description Returns the organisation's credit grants with what each has left, and the trial balance.
+         */
+        get: operations["listCreditGrants"];
+        put?: never;
+        /**
+         * 🛡️ Grant trial credit to an organisation
+         * @description Grants credit that the organisation's test runs and AI usage draw from. An organisation with no plan is started on `plan_id` as a trial that ends when the credit expires; a trial organisation's plan is extended to the latest expiry. Organisations on any other plan are refused.
+         */
+        post: operations["createCreditGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/credit-offers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ List credit offers
+         * @description Returns every credit offer with its status, newest first.
+         */
+        get: operations["listCreditOffers"];
+        put?: never;
+        /**
+         * 🛡️ Offer trial credit to an email, an email domain or all work domains
+         * @description Reserves trial credit for a person who has no organisation yet. When someone the offer covers creates an organisation, it is granted the credit for `duration_days` on `plan_id`. An email or domain offer is claimed once, and an email or domain has at most one open offer. A `work_domains` offer stays open and grants once per work email domain, to callers with no email or domain offer; at most one is open.
+         */
+        post: operations["createCreditOffer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/credit-offers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 🛡️ Revoke a credit offer
+         * @description Revokes an open offer so creating an organisation no longer claims it. Claimed offers can't be revoked; their credit is a grant on the organisation. Revoking a `work_domains` offer keeps the grants it already made.
+         */
+        delete: operations["revokeCreditOffer"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2459,7 +3138,7 @@ export interface paths {
         put?: never;
         /**
          * Dodo Payments webhook
-         * @description Receives Dodo Payments events directly from Dodo (verified by the Standard Webhooks signature). payment.succeeded events carrying an invoice_id in metadata mirror the payment onto the invoice; everything else is acked and ignored.
+         * @description Receives signature-verified Dodo events. subscription.* events re-fetch the subscription from Dodo and mirror it, with the org's plan assignment. Other events are acknowledged and ignored.
          */
         post: operations["dodoPaymentsWebhook"];
         delete?: never;
@@ -2560,27 +3239,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/failure-groups/{id}/members/{test_case_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * ⚙️ Detach a test from a failure group
-         * @description Records a human correction: this test does not belong to the group. Sticky — machine and agent attaches will not re-attach it; a later human attach supersedes the detach. Human-only.
-         */
-        delete: operations["detachFailureGroupMember"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/failure-groups/{id}/share": {
+    "/api/files/loom": {
         parameters: {
             query?: never;
             header?: never;
@@ -2590,10 +3249,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * ⚙️ Share a failure group's diagnosis
-         * @description Posts this group's diagnosis to a chosen Slack destination, with a link back to the failure group. The diagnosis and header are read from the stored group, never the client. A thread reply must belong to a run in this project; the channel must be accessible to the project's organization.
+         * ⚙️ 🧪 Import a Loom video
+         * @description Downloads a Loom share video and stores it as a file.
          */
-        post: operations["shareFailureGroup"];
+        post: operations["importLoomFile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2763,7 +3422,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Upsert a main App installation
-         * @description Records or updates a main App installation for an org.
+         * @description Records or updates a main App installation for an org the caller can access.
          */
         post: operations["upsertMainInstallation"];
         delete?: never;
@@ -2823,7 +3482,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Merge a pull request
-         * @description Squash-merges an open, mergeable pull request.
+         * @description Merges an open, mergeable pull request with a merge commit.
          */
         post: operations["mergePullRequest"];
         delete?: never;
@@ -2901,7 +3560,7 @@ export interface paths {
         };
         /**
          * ⚙️ List reporter deliveries
-         * @description Lists the check runs and PR comments the reporter App delivered for a project, newest first. Each row is the latest state of one check run (per test run) or one PR comment (per PR + environment).
+         * @description Lists the check runs, PR comments and linked test changes checks the reporter App delivered for a project, newest first. Each row is the latest state of one check run (per test run), one PR comment (per PR + environment) or one linked test changes check (per app PR).
          */
         get: operations["listReporterDeliveries"];
         put?: never;
@@ -2947,7 +3606,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Create a reporter installation
-         * @description Records a reporter App installation for an org.
+         * @description Records a reporter App installation for an org the caller can access.
          */
         post: operations["createReporterInstallation"];
         delete?: never;
@@ -3016,6 +3675,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/github/reporter-app/pull-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ Get a delivery's pull request
+         * @description Reads an app PR live from GitHub through the project org's reporter App installation, and compares its current head with the commit a delivery was written on.
+         */
+        get: operations["getReporterPullRequest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/github/tree": {
         parameters: {
             query?: never;
@@ -3036,20 +3715,20 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/gsheet/webhook": {
+    "/api/hive/agents": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Drive push receiver
-         * @description Receives Google Drive change notifications, authenticated by the per-channel HMAC token, and marks the matching watch channel as notified.
+         * List Hive agents
+         * @description Returns the Hive agents a chat session can be created with, each at its `@latest` version. Prompts and tool lists stay in Hive.
          */
-        post: operations["gsheetDriveWebhook"];
+        get: operations["listHiveAgents"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3096,6 +3775,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/internal/fixture-emails/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * ⚙️ Send a fixture app login email
+         * @description Sends a login code and magic link for a fixture app (such as magic-link-app) used by e2e tests. Recipients outside @empiricalrun.email are rejected.
+         */
+        post: operations["sendFixtureLoginEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/internal/request-ingestion/jira/webhook": {
         parameters: {
             query?: never;
@@ -3107,7 +3806,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Jira webhook
-         * @description Receives a Jira webhook, resolves the install and project, and ingests issues carrying the `empirical` label as Empirical requests.
+         * @description Receives a Jira webhook, resolves the install and project, and ingests issues carrying the `empirical` label as Empirical tasks.
          */
         post: operations["jiraWebhook"];
         delete?: never;
@@ -3127,7 +3826,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Linear webhook
-         * @description Receives a Linear webhook, validates its signature, and ingests labelled issues into the resolved project as Empirical requests.
+         * @description Receives a Linear webhook, validates its signature, and ingests labelled issues into the resolved project as Empirical tasks.
          */
         post: operations["linearWebhook"];
         delete?: never;
@@ -3170,6 +3869,26 @@ export interface paths {
          * @description Registers a one-time scheduler alarm that fires the snooze expiry callback at `snooze_until`.
          */
         post: operations["scheduleSnoozeExpiry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/internal/seed/chat-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * ⚙️ 🧪 Seed a chat session with messages (preview only)
+         * @description Creates a chat session in the scoped project whose history is the given messages, without starting an agent turn or checking billing. For e2e tests that need an ongoing session, such as the in-session billing block. Returns 404 outside preview and local.
+         */
+        post: operations["seedChatSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3275,7 +3994,7 @@ export interface paths {
         put?: never;
         /**
          * 🛡️ Create an invoice
-         * @description Creates a new invoice for an existing organisation.
+         * @description Creates a new invoice for an existing organisation. Refused for an org with a live Dodo subscription, which Dodo bills instead.
          */
         post: operations["createInvoice"];
         delete?: never;
@@ -3303,7 +4022,7 @@ export interface paths {
         head?: never;
         /**
          * 🛡️ Update an invoice
-         * @description Updates fields on an existing invoice.
+         * @description Updates fields on an existing invoice. Moving it to an org with a live Dodo subscription is refused.
          */
         patch: operations["updateInvoice"];
         trace?: never;
@@ -3325,6 +4044,26 @@ export interface paths {
          * @description Replaces all billing lines on an invoice with the supplied set.
          */
         put: operations["replaceInvoiceBillingLines"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/invoices/{id}/email-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ Preview an invoice email
+         * @description Renders the invoice email exactly as `POST /{id}/send` would send it, without sending anything.
+         */
+        get: operations["previewInvoiceEmail"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -3423,7 +4162,7 @@ export interface paths {
         put?: never;
         /**
          * 🛡️ Send an invoice
-         * @description Emails the invoice PDF to the organisation's billing contacts and marks it as sent (unless `is_test_email` is set).
+         * @description Emails the invoice PDF to the organisation's billing contacts and marks it as sent (unless `is_test_email` is set). On a real send, an unpaid INR invoice without a payment link gets a Razorpay-hosted payment link, stored on the invoice and included in the email. Refused for an org with a live Dodo subscription, which Dodo bills instead.
          */
         post: operations["sendInvoice"];
         delete?: never;
@@ -3441,31 +4180,11 @@ export interface paths {
         };
         /**
          * 🛡️ List the org's invoices
-         * @description Returns all of the scoped project's org's sent invoices (paid and unpaid), newest first, with document availability flags.
+         * @description Returns all of the scoped project's org's sent invoices (paid and unpaid) and, for orgs billed through Dodo, Dodo's invoices for their successful payments, newest first, with document availability flags. If Dodo can't be reached, only our invoices are returned.
          */
         get: operations["listOrgInvoices"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/invoices/org/{id}/checkout-session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 🛡️ Create a checkout session to pay an invoice
-         * @description Creates a single-use Dodo Payments checkout session for the outstanding amount of one of the scoped project's org's sent invoices. Sessions are not stored; a new one is created per attempt. Payment confirmation arrives via the Dodo webhook, not this endpoint.
-         */
-        post: operations["createInvoiceCheckoutSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3532,26 +4251,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/invoices/org/{id}/tax-invoice/download": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 🛡️ Download the tax invoice for a paid invoice
-         * @description Streams the payment processor's (Dodo, the merchant of record) tax invoice PDF for the invoice's most recent settling payment.
-         */
-        get: operations["downloadOrgInvoiceTaxInvoice"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/invoices/reminders/upcoming": {
         parameters: {
             query?: never;
@@ -3566,6 +4265,26 @@ export interface paths {
         get: operations["listUpcomingInvoiceReminders"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jira/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive a Jira webhook
+         * @description Receives a Jira webhook delivery, resolves the install and project, and ingests issues carrying the `empirical` label as Empirical tasks.
+         */
+        post: operations["receiveJiraWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3587,7 +4306,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Create or reauthorize a Jira installation
-         * @description Stores a Jira app installation, or reauthorizes the existing site while preserving mappings, and optionally registers its webhook.
+         * @description Stores a Jira app installation, or reauthorizes the existing site while preserving mappings, and optionally registers its webhook. A signed-in user sends the OAuth code and api-worker exchanges it.
          */
         post: operations["createJiraInstallation"];
         delete?: never;
@@ -3696,6 +4415,26 @@ export interface paths {
         patch: operations["updateJiraWebhookExpiresAt"];
         trace?: never;
     };
+    "/api/linear/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive a Linear webhook
+         * @description Receives a Linear webhook delivery, verified by its `linear-signature` header, and ingests labelled issues into the resolved project as Empirical tasks.
+         */
+        post: operations["receiveLinearWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/linear/installations": {
         parameters: {
             query?: never;
@@ -3711,7 +4450,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Create a Linear installation
-         * @description Creates or reauthorizes a Linear installation and stores its OAuth tokens.
+         * @description Creates or reauthorizes a Linear installation and stores its OAuth tokens. A signed-in user sends the OAuth code and api-worker exchanges it.
          */
         post: operations["createLinearInstallation"];
         delete?: never;
@@ -3892,6 +4631,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/memories/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ 🧪 Memory activity across projects
+         * @description Returns every memory across all projects (soft-deleted included, content omitted) with edit statistics from its version history, plus daily create/edit/delete counts per project.
+         */
+        get: operations["listMemoryActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memories/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ 🧪 Memory changes made by a chat session
+         * @description Returns every create, update and delete one chat session made to the scoped project's memories, oldest first, with the reason given for each, the previous version for updates, and live memory counts before and after.
+         */
+        get: operations["listMemoryChanges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memories/classifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ 🧪 Memory classifications across projects
+         * @description Returns every stored JEV classification under one vocabulary version, for all versions of all memories (soft-deleted included). A memory's current labels are the row for its latest version; rows for older versions mean it was edited since.
+         */
+        get: operations["listMemoryClassifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memories/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ 🧪 Most read and most edited memories
+         * @description Returns the scoped project's most read memories (read_memory calls, counted by Hive from agent sessions) and most edited memories over a recent window.
+         */
+        get: operations["getMemoryUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metrics/project-last-7-days": {
         parameters: {
             query?: never;
@@ -3912,7 +4731,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/onboarding/complete": {
+    "/api/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List my notifications
+         * @description Returns the signed-in user's unread notifications and their most recent read ones, limited to projects they can still access.
+         */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/{id}/read": {
         parameters: {
             query?: never;
             header?: never;
@@ -3922,17 +4761,57 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Create an org and/or a project
-         * @description With `org_name`, creates a new organisation, adds the caller as a member, then creates the project. With `org_id`, creates the project in an organisation the caller already belongs to. Either way provisions the project's (empty) GitHub repo in the Empirical org.
+         * Mark a notification read
+         * @description Marks one of the signed-in user's notifications as read.
          */
-        post: operations["completeOnboarding"];
+        post: operations["markNotificationRead"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/onboarding/context": {
+    "/api/notifications/dummy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🧪 Create a dummy notification (non-production only)
+         * @description Creates an unread notification for the signed-in user about the project's latest chat session or test run, and pushes it on the user's realtime channel. Not available in production.
+         */
+        post: operations["createDummyNotification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark all my notifications read
+         * @description Marks every unread notification of the signed-in user as read.
+         */
+        post: operations["markAllNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/oauth/authorize-url": {
         parameters: {
             query?: never;
             header?: never;
@@ -3940,10 +4819,30 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get onboarding context
-         * @description Returns the caller's pending invites and whether their email domain can be offered for auto-join.
+         * ⚙️ Get an OAuth authorize URL
+         * @description Builds the provider authorize URL (client ID and scopes) for connecting Slack, Linear, Jira or the GitHub reporter app. The caller keeps the state and redirects to the URL.
          */
-        get: operations["getOnboardingContext"];
+        get: operations["getOAuthAuthorizeUrl"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/oauth/clients/{client_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an app asking to access Empirical
+         * @description Describes an OAuth client of Empirical's sign-in (e.g. an MCP client) for the consent screen: its self-chosen name, whether Empirical registered it, and where it receives tokens.
+         */
+        get: operations["getOAuthClient"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4053,7 +4952,11 @@ export interface paths {
          */
         get: operations["listOrgs"];
         put?: never;
-        post?: never;
+        /**
+         * Create an organization
+         * @description Creates an organization and adds the caller as its first member. If a credit offer is open for the caller's email or email domain, the organization claims it and starts a trial with that credit. Otherwise a caller with a work email gets the open offer for work email domains, once per domain. Create projects in it with `POST /api/projects`.
+         */
+        post: operations["createOrg"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4156,7 +5059,7 @@ export interface paths {
         post?: never;
         /**
          * 🛡️ Remove a member from an organization
-         * @description Removes the org from the user's membership metadata. The removed member keeps access until their session token refreshes. Restricted to org members and super admins.
+         * @description Removes the user's membership in the organization; access ends on their next request. Restricted to org members and super admins.
          */
         delete: operations["removeOrgMember"];
         options?: never;
@@ -4195,7 +5098,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Resolve org membership for a signed-in user
-         * @description Accepts pending invites for the email and matches org email domains; grants the union in the user's metadata. System-to-system callers only.
+         * @description Grants super-admin to staff emails; for users with no org yet, accepts pending invites for the email and matches org email domains. Returns the user's memberships and super-admin flag. A signed-in user resolves their own membership and needs a confirmed email; system callers name the user in the body.
          */
         post: operations["resolveMembership"];
         delete?: never;
@@ -4213,13 +5116,13 @@ export interface paths {
         };
         /**
          * 🛡️ List plan assignments
-         * @description Returns a paginated list of plan assignments, optionally filtered by organisation and order-form line.
+         * @description Returns a paginated list of plan assignments, optionally filtered by organisation and plan.
          */
         get: operations["listPlanAssignments"];
         put?: never;
         /**
          * 🛡️ Create a plan assignment
-         * @description Creates a plan assignment for an existing organisation.
+         * @description Puts an existing organisation on a plan from `effective_from`. A trial the organisation is on ends then, with its credit.
          */
         post: operations["createPlanAssignment"];
         delete?: never;
@@ -4250,6 +5153,74 @@ export interface paths {
          * @description Updates fields on an existing plan assignment.
          */
         patch: operations["updatePlanAssignment"];
+        trace?: never;
+    };
+    "/api/plan-assignments/org": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ Get the org's plan
+         * @description Returns whether the scoped project's org is on a plan (now, or during `month` or `period`), and the plan's terms when it is a shared plan.
+         */
+        get: operations["getOrgPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ List plans
+         * @description Returns the shared plans with their meters, or one organisation's custom plans.
+         */
+        get: operations["listPlans"];
+        put?: never;
+        /**
+         * 🛡️ Create a shared plan
+         * @description Creates a shared plan and its meters. With `dodo_sync` and no `dodo_product_id`, its Dodo product is created (or an existing one for the key is linked) in the same request; if that fails, nothing is saved. Plans are immutable once created, apart from `name`, `status` and `dodo_sync`: to change a price, create a new plan with a new key and retire the old one. Custom plans are created through order forms.
+         */
+        post: operations["createPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plans/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 🛡️ Get a plan
+         * @description Retrieves a single plan with its meters.
+         */
+        get: operations["getPlanById"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 🛡️ Update a plan's name, status or Dodo sync
+         * @description Sets a plan's `name`, `status` or `dodo_sync`. Plans are immutable apart from these: any other field is rejected. None of them touches existing assignments, which stay on the plan. A new name is applied to the plan's Dodo product first, and turning `dodo_sync` on creates the product if there is none; if Dodo refuses either, nothing changes.
+         */
+        patch: operations["updatePlan"];
         trace?: never;
     };
     "/api/project-addons": {
@@ -4494,6 +5465,46 @@ export interface paths {
         get: operations["checkProjectRepoExists"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{id}/repo-settings-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ Check test repository settings
+         * @description Checks the project's GitHub repository (or a repo transfer destination) against the settings Empirical needs: merge commits only, app access, matching default branch, and no rulesets blocking Empirical's branches.
+         */
+        get: operations["checkProjectRepoSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{id}/repo-settings-check/fix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🛡️ Fix test repository merge settings
+         * @description For repositories owned by empirical-run only: turns on merge commits and turns off squash and rebase merging, then returns the re-checked result. Rulesets are reported, never changed.
+         */
+        post: operations["fixProjectRepoSettings"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4775,13 +5786,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * ⚙️ Issue a realtime token
-         * @description Mints a short-lived token (1 hour TTL) the caller uses to open the realtime-worker WebSocket channel.
-         */
-        get: operations["getRealtimeToken"];
+        get?: never;
         put?: never;
-        post?: never;
+        /**
+         * ⚙️ Issue a channel-scoped realtime token
+         * @description Mints a short-lived token (1 hour TTL) that opens only the requested realtime-worker WebSocket channels the caller may read: project channels for projects the caller can access, test-run channels for runs in those projects, and the signed-in user's own user channel. Inaccessible or unknown channels are left out of the token; if none remain the request is refused.
+         */
+        post: operations["createRealtimeToken"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4812,7 +5823,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/reporter-types": {
+    "/api/runner-backends/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🧪 Call home from an installation's stack
+         * @description Called by the registration Lambda in a Private Runner stack. On Create and Update it records the stack's resources and versions and verifies them; a pending backend that passes becomes active. Delete always succeeds: it releases an unverified claim so the link can be reused, or disables an active backend and moves its projects back to Empirical-hosted runs.
+         */
+        post: operations["claimRunnerBackend"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runner-backends/project": {
         parameters: {
             query?: never;
             header?: never;
@@ -4820,10 +5851,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * ⚙️ 🧪 List reporter capabilities
-         * @description Lists reporter types, supported destinations and events, and inbound-reply capabilities.
+         * 🧪 Get the scoped project's runner backend
+         * @description Returns the runner backend the scoped project is linked to, including its verification status, or null when the project runs on Empirical-hosted infrastructure.
          */
-        get: operations["listReporterTypes"];
+        get: operations["getProjectRunnerBackend"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4832,59 +5863,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/requests": {
+    "/api/runner-backends/project/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
+        get?: never;
+        put?: never;
+        post?: never;
         /**
-         * ⚙️ List requests
-         * @description Returns a paginated list of requests for the scoped project.
+         * 🧪 Remove a private runner
+         * @description Deletes an unfinished setup or a disconnected runner of the scoped project's organisation that no project uses. Its CloudFormation stack, if one exists, stays in the AWS account until deleted there.
          */
-        get: operations["listRequests"];
+        delete: operations["removeProjectRunnerBackend"];
+        options?: never;
+        head?: never;
+        /**
+         * 🧪 Rename a private runner
+         * @description Renames a runner backend of the scoped project's organisation.
+         */
+        patch: operations["renameProjectRunnerBackend"];
+        trace?: never;
+    };
+    "/api/runner-backends/project/{id}/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
         put?: never;
         /**
-         * ⚙️ Create a request
-         * @description Creates a request for the scoped project and, for non-draft requests, spawns a chat session for the agent.
+         * 🧪 Disconnect a private runner
+         * @description Stops sending runs to a runner backend of the scoped project's organisation and moves every project on it back to Empirical-hosted runs. The stack stays in the AWS account; delete it there to remove it. Re-enable restores the runner, but not the projects' links.
          */
-        post: operations["createRequest"];
+        post: operations["disconnectProjectRunnerBackend"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/requests/{id}": {
+    "/api/runner-backends/project/{id}/enable": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * ⚙️ Get a request
-         * @description Retrieves a single request by ID.
-         */
-        get: operations["getRequest"];
+        get?: never;
         put?: never;
-        post?: never;
         /**
-         * ⚙️ Delete a request
-         * @description Permanently deletes a request.
+         * 🧪 Re-enable a disconnected private runner
+         * @description Verifies a disabled runner backend of the scoped project's organisation and makes it active again if every check passes. Projects are not re-linked.
          */
-        delete: operations["deleteRequest"];
+        post: operations["enableProjectRunnerBackend"];
+        delete?: never;
         options?: never;
         head?: never;
-        /**
-         * ⚙️ Update a request
-         * @description Updates a request's title, description, or status. A draft → open transition spawns a chat session.
-         */
-        patch: operations["updateRequest"];
+        patch?: never;
         trace?: never;
     };
-    "/api/requests/{id}/chat-sessions": {
+    "/api/runner-backends/project/{id}/registration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🧪 Create a new setup link
+         * @description Mints a new quick-create link for a pending runner backend of the scoped project's organisation, replacing any earlier unused link.
+         */
+        post: operations["createProjectRunnerBackendRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runner-backends/project/available": {
         parameters: {
             query?: never;
             header?: never;
@@ -4892,16 +5955,72 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * ⚙️ List a request's chat sessions
-         * @description Returns the chat sessions spawned from a request.
+         * 🧪 List the organisation's runner backends
+         * @description Every runner backend of the scoped project's organisation, in any status, so a project can use one another project set up or resume a setup in progress.
          */
-        get: operations["listRequestChatSessions"];
+        get: operations["listProjectOrgRunnerBackends"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runner-backends/project/runner-backend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 🧪 Choose where the project's runs execute
+         * @description Sends the scoped project's new runs to an active runner backend of its organisation, or back to Empirical-hosted infrastructure with null. Runs already created keep their placement.
+         */
+        put: operations["setScopedProjectRunnerBackend"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runner-backends/project/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
         put?: never;
         /**
-         * ⚙️ Create a chat session for a request
-         * @description Starts a new chat session tied to a request.
+         * 🧪 Start setting up a private runner
+         * @description Registers a pending runner backend for the scoped project's organisation in the given AWS account and region, or reuses one whose stack hasn't called home yet or was deleted, and returns a quick-create link for it. The stack activates the backend when it is created.
          */
-        post: operations["createRequestChatSession"];
+        post: operations["setupProjectRunnerBackend"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runner-backends/project/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🧪 Re-check the scoped project's runner backend
+         * @description Assumes the role of the backend the scoped project is linked to, makes one read-only call to each queue, the cluster and the log group, and records the result, so a customer can confirm a fix to their role or stack. It never changes the backend's status; use `enable` for a disabled one.
+         */
+        post: operations["verifyProjectRunnerBackend"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4926,6 +6045,26 @@ export interface paths {
          * @description Enqueues a snapshot-create job for the scoped project and base template.
          */
         post: operations["createSandboxSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sandbox-snapshots/projects/{project_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ List a project's sandbox snapshots
+         * @description Returns the most recent sandbox snapshots for a project; used by sandbox-template CI to wait for a rebuild.
+         */
+        get: operations["listProjectSandboxSnapshots"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4986,6 +6125,88 @@ export interface paths {
          * @description Upserts one or more snapshot source rows; called by sandbox-template CI.
          */
         post: operations["upsertSandboxSnapshotSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system-messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 🛡️ 🧪 List system messages with delivery and ack counts */
+        get: operations["listSystemMessages"];
+        put?: never;
+        /**
+         * 🛡️ 🧪 Broadcast a system message to manager sessions
+         * @description Persists the message and delivers it to project manager sessions. With `project_ids`, every listed project gets a recipient row, and one without an open manager is recorded as failed. Without it, the message goes to every project with an open manager, and active projects without one are returned in `skipped_project_ids` (not persisted). Delivery is attempted before responding. Managers acknowledge through `POST /api/system-messages/{id}/ack`.
+         */
+        post: operations["createSystemMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system-messages/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 🛡️ 🧪 Get a system message's per-project delivery and ack status */
+        get: operations["getSystemMessage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system-messages/{id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 🧪 Acknowledge a system message from a manager session
+         * @description Records the calling manager session's acknowledgement for its project. Any manager session of the project may ack, so a successor can answer a message its predecessor received. Re-acking overwrites the previous status and note.
+         */
+        post: operations["ackSystemMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tasks/{id}/chat-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ⚙️ List a task's chat sessions
+         * @description Returns the chat sessions spawned from a task.
+         */
+        get: operations["listTaskChatSessions"];
+        put?: never;
+        /**
+         * ⚙️ Create a chat session for a task
+         * @description Starts a new chat session tied to a task.
+         */
+        post: operations["createTaskChatSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5092,46 +6313,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/upload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * ⚙️ Create presigned upload URLs
-         * @description Generates S3-style presigned PUT URLs for uploading files directly to an R2 bucket. Each uploading client must send the same Content-Type used here.
-         */
-        post: operations["createUploadUrls"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/upload/loom": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * ⚙️ Import a Loom video
-         * @description Downloads a Loom share video and stores it in the dashboard uploads bucket, returning its public URL.
-         */
-        post: operations["uploadLoomVideo"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/users/github-link": {
         parameters: {
             query?: never;
@@ -5147,7 +6328,7 @@ export interface paths {
         put?: never;
         /**
          * ⚙️ Upsert a GitHub link
-         * @description Creates or updates the GitHub account link for the given user. Super-admin only.
+         * @description Creates or updates a GitHub account link. A signed-in user links their own account to the GitHub user who authorized `code`; system callers pass the user and profile directly.
          */
         post: operations["upsertGithubLink"];
         /**
@@ -5155,6 +6336,50 @@ export interface paths {
          * @description Deletes a GitHub link owned by the current user.
          */
         delete: operations["deleteMyGithubLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the current user
+         * @description Returns the signed-in user's id, email, org memberships and super-admin flag as used for authorization.
+         */
+        get: operations["getCurrentUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/me/announcements-seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get when the current user last saw announcements
+         * @description Returns the time up to which the signed-in user has seen dashboard announcements, falling back to their signup time.
+         */
+        get: operations["getMyAnnouncementsSeen"];
+        /**
+         * Mark announcements as seen for the current user
+         * @description Moves the signed-in user's announcement seen time forward to the given time, or to now.
+         */
+        put: operations["markMyAnnouncementsSeen"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -5180,6 +6405,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/me/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get my onboarding checklist
+         * @description The steps to get a user from sign-up to a merged first test and Slack, with each step's status worked out from data. Each item's `action` says how to do it: an API call (with the inputs to ask the user for) or a browser URL. Call it, do `next_item_id`, and call it again. Pass `-p <slug>` (`x-project-slug`) once a project exists.
+         */
+        get: operations["getMyOnboarding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/slack-link": {
         parameters: {
             query?: never;
@@ -5199,6 +6444,26 @@ export interface paths {
          * @description Deletes a Slack link owned by the current user.
          */
         delete: operations["deleteMySlackLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/telemetry/track": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Track a telemetry event
+         * @description Records a test-run telemetry event for the scoped project. Delivery is best-effort.
+         */
+        post: operations["trackTelemetryEvent"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -5316,62 +6581,1871 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        UpcomingInvoiceRemindersResponse: {
+        AckSystemMessageRequest: {
+            /** @enum {string} */
+            status: "accepted" | "declined";
+            note?: string;
+        };
+        AckSystemMessageResponse: {
             data: {
-                /** @description Upcoming invoice reminder candidates. */
-                reminders: components["schemas"]["UpcomingInvoiceReminder"][];
+                system_message_id: number;
+                project_id: number;
+                /** @enum {string} */
+                ack_status: "accepted" | "declined";
+                acked_at: string;
             };
-            pagination: components["schemas"]["Pagination"];
         };
-        UpcomingInvoiceReminder: {
-            /** @description Invoice ID. */
-            invoice_id: number;
-            /** @description Human-readable invoice number. */
-            invoice_number: string;
-            /** @description Billed organisation ID. */
-            org_id: number;
-            /** @description Billed organisation name. */
-            org_name: string;
-            /** @description Billing recipients for the reminder. */
-            billing_emails: string[];
-            /** @description Invoice amount in minor currency units. */
-            amount_in_cents: number;
-            /** @description Invoice currency. */
-            currency: string;
-            /** @description Invoice due date. */
-            due_date: string | null;
-            /**
-             * @description Reminder email type.
-             * @enum {string}
-             */
-            reminder_type: "first" | "second";
-            /** @description Date this reminder would be sent. */
-            scheduled_send_date: string;
-            /** @description Calendar days since the due date. */
-            days_past_due: number | null;
-            /** @description First reminder timestamp, if already sent. */
-            first_reminder_sent_at: string | null;
-            /** @description Second reminder timestamp, if already sent. */
-            second_reminder_sent_at: string | null;
+        AddSnoozeTestCasesRequest: {
+            /** @description Playwright test IDs to add to the snooze. */
+            test_ids: string[];
         };
-        /** @description Pagination metadata. */
-        Pagination: {
-            /** @description Current page (1-indexed). */
-            page: number;
-            /** @description Items per page. */
-            per_page: number;
-            /** @description Total number of items. */
-            total: number;
-            /** @description Total number of pages. */
-            total_pages: number;
-        };
-        OrgInvoiceListResponse: {
+        /** @enum {string} */
+        AiUsageType: "manager" | "manager_initiated" | "user_initiated" | "triage";
+        AlarmResponse: {
             /** @description Response payload. */
             data: {
-                invoices: components["schemas"]["OrgInvoice"][];
+                /** @description Opaque id of the scheduled alarm. */
+                alarm_id: string;
+                /** @description The resolved wake-up time, as an ISO 8601 timestamp. */
+                wake_at: string;
             };
         };
-        OrgInvoice: {
+        AnalyticsDaily: {
+            /** @description Date in YYYY-MM-DD format. */
+            date: string;
+            /** @description Total number of test runs on this date. */
+            run_count: number;
+            /** @description Number of passed test runs. */
+            passed_runs: number;
+            /** @description Number of failed test runs. */
+            failed_runs: number;
+            /** @description Number of test runs that errored. */
+            error_runs: number;
+            /** @description Number of cancelled test runs. */
+            cancelled_runs: number;
+            /** @description Number of reruns on this date. */
+            rerun_count: number;
+            /** @description Total number of tests executed. */
+            total_tests: number;
+            /** @description Number of passed tests. */
+            passed_tests: number;
+            /** @description Number of failed tests. */
+            failed_tests: number;
+            /** @description Number of failed tests after applying snoozes. */
+            failed_tests_after_snooze: number;
+            /** @description Number of flaky tests. */
+            flaky_tests: number;
+        };
+        AnalyticsErrorResponse: {
+            /** @description Human-readable error message. */
+            error: string;
+        };
+        AnalyticsRunsSummary: {
+            /** @description Total number of test runs in the period. */
+            total_runs: number;
+            /** @description Number of passed test runs. */
+            passed_runs: number;
+            /** @description Number of failed test runs. */
+            failed_runs: number;
+            /** @description Number of test runs that errored. */
+            error_runs: number;
+            /** @description Pass rate as a percentage (0-100). */
+            pass_rate: number;
+            /** @description Average number of tests per run. */
+            avg_tests_per_run: number;
+            /** @description Total number of reruns. */
+            rerun_count: number;
+            /** @description Rerun rate as a percentage (0-100). */
+            rerun_rate: number;
+        };
+        AnalyticsTestCase: {
+            /** @description Unique identifier for the test case. */
+            test_case_id: string;
+            /** @description Name of the test case. */
+            test_name: string;
+            /** @description File path of the test case. */
+            file_path: string;
+            /** @description Name of the project the test belongs to. */
+            project_name: string;
+            /** @description Array of tags associated with the test case. */
+            tags: string[];
+            /** @description ISO 8601 timestamp of the last time this test was run. */
+            last_run_at: string;
+            /** @description Aggregated metrics for this test case. */
+            metrics: {
+                /** @description Total number of runs for this test case. */
+                total_runs: number;
+                /** @description Number of times the test passed. */
+                pass_count: number;
+                /** @description Number of times the test failed. */
+                fail_count: number;
+                /** @description Number of times the test was flaky. */
+                flaky_count: number;
+                /** @description Pass rate as a percentage (0-100). */
+                pass_rate: number;
+                /** @description Fail rate as a percentage (0-100). */
+                fail_rate: number;
+                /** @description Flaky rate as a percentage (0-100). */
+                flaky_rate: number;
+            };
+            /** @description History of test executions for this test case. */
+            history: components["schemas"]["TestCaseHistoryEntry"][];
+        };
+        AnalyticsTestCaseV2: {
+            /** @description Unique identifier for the test case. */
+            test_case_id: string;
+            /** @description Name of the test case. */
+            test_name: string;
+            /** @description File path of the test case. */
+            file_path: string;
+            /** @description Name of the project the test belongs to. */
+            project_name: string;
+            /** @description Array of tags associated with the test case. */
+            tags: string[];
+            /** @description ISO 8601 timestamp of the last time this test was run. */
+            last_run_at: string;
+            /** @description Aggregated metrics for this test case. */
+            metrics: {
+                /** @description Total number of runs for this test case. */
+                total_runs: number;
+                /** @description Number of times the test passed. */
+                pass_count: number;
+                /** @description Number of times the test failed. */
+                fail_count: number;
+                /** @description Number of times the test was flaky. */
+                flaky_count: number;
+                /** @description Pass rate as a percentage (0-100). */
+                pass_rate: number;
+                /** @description Fail rate as a percentage (0-100). */
+                fail_rate: number;
+                /** @description Flaky rate as a percentage (0-100). */
+                flaky_rate: number;
+            };
+        };
+        AnalyticsTestCasesResponse: {
+            /** @description Response payload. */
+            data: {
+                test_cases: components["schemas"]["AnalyticsTestCase"][];
+                summary: components["schemas"]["AnalyticsTestCasesSummary"];
+            };
+        };
+        AnalyticsTestCasesSummary: {
+            /** @description Total number of test cases. */
+            total_test_cases: number;
+            /** @description Number of test cases that have execution history. */
+            test_cases_with_history: number;
+        };
+        AnalyticsTestCasesV2Response: {
+            /** @description Response payload. */
+            data: {
+                test_cases: components["schemas"]["AnalyticsTestCaseV2"][];
+                summary: components["schemas"]["AnalyticsTestCasesSummary"];
+            };
+        };
+        AnalyticsTestCountResponse: {
+            /** @description Response payload. */
+            data: {
+                daily: components["schemas"]["TestCountByDayEntry"][];
+                summary: components["schemas"]["TestCountSummary"];
+            };
+        };
+        AnalyticsTestRunsResponse: {
+            /** @description Response payload. */
+            data: {
+                daily: components["schemas"]["AnalyticsDaily"][];
+                summary: components["schemas"]["AnalyticsRunsSummary"];
+            };
+        };
+        AnnouncementsSeenResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Announcements created at or before this time count as seen. Defaults to the user's signup time. */
+                seen_at: string;
+            };
+        };
+        ApiKeyCreateResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The created API key(s), with full secret. */
+                api_keys: components["schemas"]["CreatedProjectApiKey"][];
+            };
+        };
+        ApiKeyListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The project's API keys (secrets truncated). */
+                api_keys: components["schemas"]["TruncatedProjectApiKey"][];
+            };
+        };
+        ApiKeySuccessResponse: {
+            /** @description Response payload. */
+            data: {
+                /**
+                 * @description Always true on success.
+                 * @enum {boolean}
+                 */
+                success: true;
+            };
+        };
+        Artifact: {
+            /** @description Artifact path relative to the test run. */
+            key: string;
+            /** @description HTTP URL to download the artifact. */
+            url: string;
+            /** @description File size in bytes. */
+            size: number;
+            /** @description ISO 8601 timestamp of when the artifact was last modified. */
+            last_modified: string;
+        };
+        AttachFailureGroupMemberRequest: {
+            /** @description The run in which this failure was observed. */
+            test_run_id: number;
+            /** @description Test case ID (normalized 41-character Playwright test id) of the failing test. */
+            test_case_id?: string;
+            /**
+             * @deprecated
+             * @description Deprecated alias of `test_case_id`.
+             */
+            pw_test_id?: string;
+        };
+        AvailableReporter: {
+            /**
+             * @description Posts run status updates to Slack channels.
+             * @enum {string}
+             */
+            reporter_type: "slack_run_status";
+            /**
+             * @description `available` when the organization has at least one registered Slack channel; otherwise `not_connected`.
+             * @enum {string}
+             */
+            status: "available" | "not_connected";
+            /** @description The organization's registered, unarchived Slack channels a reporter config can name. */
+            slack_channels: components["schemas"]["ReporterSlackChannel"][];
+        } | {
+            /**
+             * @description Posts a GitHub check run on the build commit.
+             * @enum {string}
+             */
+            reporter_type: "github_check";
+            /**
+             * @description `available`: the GitHub Reporter app is installed with the permission this reporter needs. `not_installed`: no install for the organization. `install_requested`: an install is waiting for a GitHub owner's approval. `missing_permission`: installed, but without the permission this reporter needs (`checks` for check runs, `pull_requests` for PR comments).
+             * @enum {string}
+             */
+            status: "available" | "not_installed" | "install_requested" | "missing_permission";
+            /** @description Repositories (`owner/name`) the install covers. The reporter posts only for runs whose `build.repo` is one of these. */
+            repositories: string[];
+        } | {
+            /**
+             * @description Posts (and updates) a comment on the pull request for the build branch.
+             * @enum {string}
+             */
+            reporter_type: "github_pr_comment";
+            /**
+             * @description `available`: the GitHub Reporter app is installed with the permission this reporter needs. `not_installed`: no install for the organization. `install_requested`: an install is waiting for a GitHub owner's approval. `missing_permission`: installed, but without the permission this reporter needs (`checks` for check runs, `pull_requests` for PR comments).
+             * @enum {string}
+             */
+            status: "available" | "not_installed" | "install_requested" | "missing_permission";
+            /** @description Repositories (`owner/name`) the install covers. The reporter posts only for runs whose `build.repo` is one of these. */
+            repositories: string[];
+        } | {
+            /**
+             * @description Emails a report when the run ends to every user whose email domain is one of the organization's email domains.
+             * @enum {string}
+             */
+            reporter_type: "email_run_report";
+            /**
+             * @description Always `available`.
+             * @enum {string}
+             */
+            status: "available";
+        } | {
+            /**
+             * @description Sends a Slack DM to whoever started the run when it ends. Runs only: environments cannot hold it.
+             * @enum {string}
+             */
+            reporter_type: "slack_creator_dm";
+            /**
+             * @description For runs triggered by the caller: `available` when the person the run would be attributed to (the signed-in user, or an agent session's creator) has a linked Slack account; `not_linked` when they have none; `no_creator` for callers such as project API keys, whose runs have no one to DM.
+             * @enum {string}
+             */
+            status: "available" | "not_linked" | "no_creator";
+        };
+        BillingMeterSummary: {
+            /** @enum {string} */
+            meter: "ai_credits" | "test_minutes";
+            included_qty: number | null;
+            overage_price_cents: number | null;
+            /** @description Units used so far this period. */
+            used: number;
+            /** @description Projected units at month end (trailing 7-day pace); null when too early to project. */
+            projected: number | null;
+            /** @description Usage beyond the allowance, priced at the overage rate. On a trial, credits pay for it. */
+            overage_cents: number;
+            projected_overage_cents: number | null;
+        };
+        BillingMonthSummaryResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Usage month, YYYY-MM (UTC). For a billing cycle, the month it starts in. */
+                month: string;
+                /** @description The period's key (YYYY-MM-DD), to pass as `period`: the 1st for a calendar month, the scheduled start date for a billing cycle. */
+                period_key: string;
+                /**
+                 * @description `month`: a UTC calendar month. `cycle`: a Dodo billing cycle [previous_billing_date, next_billing_date).
+                 * @enum {string}
+                 */
+                period_kind: "month" | "cycle";
+                period_start: string;
+                /** @description Exclusive (ISO 8601). */
+                period_end: string;
+                /** @description Whether this is the current period (month or cycle). */
+                is_current_month: boolean;
+                /** @description The shared plan in effect; null for no plan or a custom contract. */
+                plan: {
+                    name: string;
+                    currency: string;
+                    base_price_cents: number;
+                    /** @description Whether the org is on a trial, where usage draws from credits instead of being billed. */
+                    trial: boolean;
+                } | null;
+                meters: components["schemas"]["BillingMeterSummary"][];
+                projects: {
+                    project_id: number;
+                    name: string;
+                    slug: string;
+                    ai_credits: number;
+                    test_minutes: number;
+                }[];
+                /** @description Overage billed on top of the plan so far. 0 on a trial, where credits pay for usage. */
+                overage_cents: number;
+                projected_overage_cents: number | null;
+                /** @description The trial's credit, for the current period of an org on a trial; null otherwise. */
+                credits: {
+                    /** @description Total credit granted to the org, in US cents. */
+                    granted_cents: number;
+                    /** @description Credit used so far, in US cents. */
+                    used_cents: number;
+                    /** @description Credit left on grants active now, in US cents. The trial ends at 0. */
+                    balance_cents: number;
+                    /** @description When the last active grant expires (ISO 8601); null when none is active. */
+                    expires_at: string | null;
+                } | null;
+                /** @description Overage of the previous usage period, as a guide when picking a limit. Current period only. */
+                last_month_overage_cents: number | null;
+                usage_limit: components["schemas"]["UsageLimit"];
+            };
+        };
+        BillingPeriod: {
+            /** @description Pass as `period` to the month summary (YYYY-MM-DD). */
+            key: string;
+            /**
+             * @description `month`: a UTC calendar month. `cycle`: a Dodo billing cycle [previous_billing_date, next_billing_date).
+             * @enum {string}
+             */
+            kind: "month" | "cycle";
+            /** @description Inclusive (ISO 8601). */
+            start: string;
+            /** @description Exclusive (ISO 8601). */
+            end: string;
+            is_current: boolean;
+        };
+        BillingPeriodsResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["BillingPeriod"][];
+        };
+        BranchExistsResponse: {
+            /** @description Whether the branch exists. */
+            exists: boolean;
+        };
+        CancelTestRunFailureResponse: {
+            /** @description Reason the test run could not be cancelled. */
+            message: string;
+        };
+        CancelTestRunRequest: {
+            /** @description Optional reason for cancelling the test run. Recorded for auditing purposes. */
+            reason?: string;
+        };
+        CancelTestRunResponse: {
+            /** @description Confirmation message indicating the test run was cancelled. */
+            message: string;
+        };
+        ChatSession: {
+            /** @description Chat session ID. */
+            id: number;
+            /** @description Session title. */
+            title: string | null;
+            /** @description Creator user ID. */
+            created_by: string | null;
+            /** @description Creation timestamp (ISO). */
+            created_at: string;
+            /** @description Last update timestamp (ISO). */
+            updated_at: string;
+            /** @description Owning project ID. */
+            project_id: number;
+            /** @description Hive agent ref the session runs (`<name>` or `<name>@<version>`). The legacy values `chat` and `triage` mean the default agent, `main`. */
+            mode: string;
+            /**
+             * @description Workload class, assigned server-side; null for an ordinary user chat. Read-only — no request body accepts it.
+             * @enum {string|null}
+             */
+            purpose?: "triage" | "manager" | null;
+            /** @description Requested model. */
+            model: string | null;
+            /** @description Tests impacted by this session. */
+            impacted_tests: {
+                test_case: {
+                    name: string;
+                    suites: string[];
+                    file_path: string;
+                    start_line: number;
+                    end_line: number;
+                };
+                /** @enum {string} */
+                type: "added" | "removed" | "modified";
+                modified_by: {
+                    file_path: string;
+                    line: {
+                        number: number;
+                        /** @enum {string} */
+                        type: "added" | "removed" | "modified";
+                    };
+                }[] | null;
+            }[];
+            /** @description Whether the agent is awaiting user input. */
+            ask_user_for_input: boolean | null;
+            /** @description Langfuse trace ID. */
+            langfuse_trace_id: string | null;
+            /** @description Whether the session is closed. */
+            is_closed: boolean;
+            /** @description For a manager closed by rollover, the manager session that took over. */
+            superseded_by_session_id: number | null;
+            /** @description The session this one was spawned from: the agent session that delegated it, or the manager it took over from. */
+            parent_chat_session_id?: number | null;
+            /**
+             * @description How this session came from its parent.
+             * @enum {string|null}
+             */
+            parent_relationship?: "delegation" | "manager_handoff" | null;
+            /** @description Feature flags enabled for the session. */
+            feature_flags: string[];
+            /** @description Durable outbox row for the first message. */
+            pending_first_message?: unknown;
+        };
+        ChatSessionBranch: {
+            /** @description Branch name. */
+            branch_name: string;
+            /** @description Repository host. */
+            repo_host: string;
+            /** @description Repository owner. */
+            repo_owner: string;
+            /** @description Repository name. */
+            repo_name: string;
+            /** @description When the branch was registered (ISO). */
+            created_at: string;
+            /** @description Pull requests opened from this branch, oldest first. Empty when no PR exists yet. */
+            pull_requests: components["schemas"]["ChatSessionBranchPullRequest"][];
+        };
+        ChatSessionBranchPullRequest: {
+            /** @description Pull request number. */
+            number: number;
+            /**
+             * @description Current pull request status.
+             * @enum {string}
+             */
+            status: "unopened" | "open" | "opened" | "closed" | "merged";
+            /** @description Pull request URL. */
+            url: string;
+            /** @description Branch the pull request merges into. */
+            base_branch: string;
+            /** @description Merge timestamp (ISO), null if not merged. */
+            merged_at: string | null;
+            /** @description When the head branch was deleted (ISO), null while it exists. */
+            head_branch_deleted_at: string | null;
+            /** @description Creation timestamp (ISO). */
+            created_at: string;
+            /** @description Last update timestamp (ISO). */
+            updated_at: string;
+        };
+        ChatSessionBranchesResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["ChatSessionBranch"][];
+        };
+        /** @description One-shot subscription that wakes the calling agent session when this session next waits for input; null when none was created. */
+        ChatSessionCallerSubscription: {
+            /** @description Subscription ID. */
+            id: number;
+        } | null;
+        ChatSessionCloseResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSession"];
+            };
+        };
+        ChatSessionCommitDiffResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Unified diff for the commit. */
+                diff: string;
+                /** @description Commit SHA. */
+                commit: string;
+            };
+        };
+        ChatSessionCommitsDiffsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Diffs keyed by commit SHA. */
+                diffs: {
+                    [key: string]: {
+                        /** @description Commit SHA. */
+                        commit: string;
+                        /** @description Unified diff, or null if unavailable. */
+                        diff: string | null;
+                    };
+                };
+            };
+        };
+        ChatSessionCostTotals: {
+            /** @description Main-agent cost. */
+            main: number;
+            /** @description Sub-agent cost. */
+            subagent: number;
+            /** @description Manager handoff-note cost. */
+            handoff: number;
+            /** @description Total cost (main + subagent + handoff). */
+            total: number;
+            /** @description Input-token cost. */
+            costInput: number;
+            /** @description Output-token cost. */
+            costOutput: number;
+            /** @description Cache-read cost. */
+            costCacheRead: number;
+            /** @description Cache-write cost. */
+            costCacheWrite: number;
+            /** @description Input tokens consumed. */
+            tokensIn: number;
+            /** @description Output tokens produced. */
+            tokensOut: number;
+            /** @description Cache-read tokens. */
+            cacheRead: number;
+            /** @description Cache-write tokens. */
+            cacheWrite: number;
+            /** @description Cache hit rate, or null when no prompt input. */
+            cacheHitRate: number | null;
+        };
+        ChatSessionCostsResponse: {
+            data: components["schemas"]["ChatSessionCostTotals"];
+            /** @description Number of session entries summed. */
+            entries_count: number;
+        };
+        ChatSessionCreateResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSession"];
+                subscription: components["schemas"]["ChatSessionCallerSubscription"];
+            };
+        };
+        ChatSessionCumulativeDiffResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Cumulative diff from base branch to head. */
+                diff: string | null;
+            };
+        };
+        ChatSessionDetailResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSessionWithUser"];
+            };
+        };
+        ChatSessionDiffResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Working diff. */
+                diff: string | null;
+                /** @description SHA of the last commit. */
+                last_commit: string | null;
+                /** @description Timestamp of the last commit (ISO). */
+                last_commit_at: string | null;
+                /** @description Associated pull request metadata, if any. */
+                pull_request: {
+                    /** @description Pull request title. */
+                    title: string;
+                    /** @description Pull request description. */
+                    description: string;
+                } | null;
+                /** @description Base ref of the comparison. */
+                base_ref?: string;
+                /** @description Head ref of the comparison. */
+                head_ref?: string;
+            };
+        };
+        ChatSessionEntryRange: {
+            /** @description Session log entries in log_seq order. */
+            entries: unknown[];
+            /** @description from_seq for the next page when the range holds more than `limit` entries, else null. */
+            next_from_seq: number | null;
+        };
+        ChatSessionEntryRangeResponse: {
+            data: components["schemas"]["ChatSessionEntryRange"];
+        };
+        ChatSessionForwardMessageResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSession"];
+                subscription: components["schemas"]["ChatSessionCallerSubscription"];
+            };
+        };
+        ChatSessionListItem: {
+            /** @description Chat session ID. */
+            id: number;
+            /** @description Session title. */
+            title: string | null;
+            /** @description Creator user ID. */
+            created_by: string | null;
+            /** @description Creation timestamp (ISO). */
+            created_at: string;
+            /** @description Last update timestamp (ISO). */
+            updated_at: string;
+            /** @description Owning project ID. */
+            project_id: number;
+            /** @description Hive agent ref the session runs (`<name>` or `<name>@<version>`). The legacy values `chat` and `triage` mean the default agent, `main`. */
+            mode: string;
+            /**
+             * @description Workload class, assigned server-side; null for an ordinary user chat. Read-only — no request body accepts it.
+             * @enum {string|null}
+             */
+            purpose?: "triage" | "manager" | null;
+            /** @description Requested model. */
+            model: string | null;
+            /** @description Whether the agent is awaiting user input. */
+            ask_user_for_input: boolean | null;
+            /** @description Langfuse trace ID. */
+            langfuse_trace_id: string | null;
+            /** @description Whether the session is closed. */
+            is_closed: boolean;
+            /** @description For a manager closed by rollover, the manager session that took over. */
+            superseded_by_session_id: number | null;
+            /** @description The session this one was spawned from: the agent session that delegated it, or the manager it took over from. */
+            parent_chat_session_id?: number | null;
+            /**
+             * @description How this session came from its parent.
+             * @enum {string|null}
+             */
+            parent_relationship?: "delegation" | "manager_handoff" | null;
+            /** @description Feature flags enabled for the session. */
+            feature_flags: string[];
+            /** @description Resolved Supabase details for the creator. */
+            created_by_user_detail?: {
+                /** @description Supabase user ID. */
+                id: string;
+                /** @description User email. */
+                email: string;
+                /** @description Display name. */
+                name: string;
+                /** @description Avatar URL. */
+                picture: string;
+            } | null;
+            /** @description Number of the session's most recently updated PR, if any. */
+            pr_number: number | null;
+            /**
+             * @description Status of the session's most recently updated PR ('unopened' when it has none).
+             * @enum {string}
+             */
+            pr_status: "unopened" | "open" | "opened" | "closed" | "merged";
+            /** @description Name of the owning project. */
+            project_name: string | null;
+            /** @description Repository name of the owning project. */
+            project_repo_name: string | null;
+            /** @description Repository owner of the owning project. */
+            project_repo_owner: string | null;
+        };
+        ChatSessionListResponse: {
+            /** @description The page of chat sessions. */
+            data: components["schemas"]["ChatSessionListItem"][];
+            /** @description Pagination + resolved filter state. */
+            pagination: {
+                /** @description Current page. */
+                page: number;
+                /** @description Items per page. */
+                per_page: number;
+                /** @description Resolved filter state for the query. */
+                filter_state: {
+                    showClosed: boolean;
+                    filterState: {
+                        field: string;
+                        /** @enum {string} */
+                        operator: "eq" | "neq" | "in" | "nin" | "gt" | "gte" | "lt" | "lte" | "contains" | "startsWith";
+                        value: string | number | boolean | (string | number | boolean)[];
+                    }[];
+                    userIds: string[];
+                    /** @enum {string} */
+                    category?: "executor" | "user";
+                };
+            };
+        };
+        ChatSessionPatchResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSession"];
+            };
+        };
+        ChatSessionSeedRequest: {
+            /** @description Hive agent recorded on the session, as `<name>` or `<name>@<version>`. Defaults to `main`. */
+            agent?: string | null;
+            messages: {
+                /** @enum {string} */
+                role: "user" | "assistant";
+                text: string;
+            }[];
+        };
+        ChatSessionSeedResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSession"];
+            };
+        };
+        ChatSessionSnapshot: {
+            /** @description Current sandbox status event. */
+            sandbox?: unknown;
+            /** @description Agent lifecycle state (active run ids, is_working). */
+            lifecycle?: unknown;
+            /** @description All user messages for the session. */
+            user_messages: unknown[];
+        };
+        ChatSessionSnapshotResponse: {
+            data: components["schemas"]["ChatSessionSnapshot"];
+        };
+        ChatSessionState: {
+            /** @description Recent session log entries. */
+            entries: unknown[];
+            /** @description User messages for the session. */
+            user_messages: unknown[];
+            /** @description Current sandbox state, or null when none. */
+            sandbox?: unknown;
+        };
+        ChatSessionStateResponse: {
+            data: components["schemas"]["ChatSessionState"];
+            pagination: components["schemas"]["Pagination"];
+        };
+        ChatSessionTimelineEvent: {
+            /** @description Timeline event ID. */
+            id: number;
+            /** @description Owning chat session ID. */
+            chat_session_id: number;
+            /**
+             * @description Timeline event type.
+             * @enum {string}
+             */
+            event_type: "pr.opened" | "pr.merged" | "pr.closed" | "chat_session.closed" | "branch.created";
+            /** @description Related pull request number, if any. */
+            pr_number: number | null;
+            /** @description User who triggered the event. */
+            created_by: string | null;
+            /** @description Event timestamp (ISO). */
+            created_at: string;
+            /** @description Resolved Supabase details for the triggerer. */
+            created_by_user_detail?: {
+                /** @description Supabase user ID. */
+                id: string;
+                /** @description User email. */
+                email: string;
+                /** @description Display name. */
+                name: string;
+                /** @description Avatar URL. */
+                picture: string;
+            } | null;
+        };
+        ChatSessionTimelineResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["ChatSessionTimelineEvent"][];
+        };
+        ChatSessionTranscriptResponse: {
+            data: components["schemas"]["SessionTranscript"];
+        };
+        ChatSessionUserDetail: {
+            /** @description Supabase user ID. */
+            id: string;
+            /** @description User email. */
+            email: string;
+            /** @description Display name. */
+            name: string;
+            /** @description Avatar URL. */
+            picture: string;
+        };
+        ChatSessionUsersResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["ChatSessionUserDetail"][];
+        };
+        ChatSessionWithUser: {
+            /** @description Chat session ID. */
+            id: number;
+            /** @description Session title. */
+            title: string | null;
+            /** @description Creator user ID. */
+            created_by: string | null;
+            /** @description Creation timestamp (ISO). */
+            created_at: string;
+            /** @description Last update timestamp (ISO). */
+            updated_at: string;
+            /** @description Owning project ID. */
+            project_id: number;
+            /** @description Hive agent ref the session runs (`<name>` or `<name>@<version>`). The legacy values `chat` and `triage` mean the default agent, `main`. */
+            mode: string;
+            /**
+             * @description Workload class, assigned server-side; null for an ordinary user chat. Read-only — no request body accepts it.
+             * @enum {string|null}
+             */
+            purpose?: "triage" | "manager" | null;
+            /** @description Requested model. */
+            model: string | null;
+            /** @description Tests impacted by this session. */
+            impacted_tests: {
+                test_case: {
+                    name: string;
+                    suites: string[];
+                    file_path: string;
+                    start_line: number;
+                    end_line: number;
+                };
+                /** @enum {string} */
+                type: "added" | "removed" | "modified";
+                modified_by: {
+                    file_path: string;
+                    line: {
+                        number: number;
+                        /** @enum {string} */
+                        type: "added" | "removed" | "modified";
+                    };
+                }[] | null;
+            }[];
+            /** @description Whether the agent is awaiting user input. */
+            ask_user_for_input: boolean | null;
+            /** @description Langfuse trace ID. */
+            langfuse_trace_id: string | null;
+            /** @description Whether the session is closed. */
+            is_closed: boolean;
+            /** @description For a manager closed by rollover, the manager session that took over. */
+            superseded_by_session_id: number | null;
+            /** @description The session this one was spawned from: the agent session that delegated it, or the manager it took over from. */
+            parent_chat_session_id?: number | null;
+            /**
+             * @description How this session came from its parent.
+             * @enum {string|null}
+             */
+            parent_relationship?: "delegation" | "manager_handoff" | null;
+            /** @description Feature flags enabled for the session. */
+            feature_flags: string[];
+            /** @description Durable outbox row for the first message. */
+            pending_first_message?: unknown;
+            /** @description Resolved Supabase details for the creator. */
+            created_by_user_detail?: {
+                /** @description Supabase user ID. */
+                id: string;
+                /** @description User email. */
+                email: string;
+                /** @description Display name. */
+                name: string;
+                /** @description Avatar URL. */
+                picture: string;
+            } | null;
+        };
+        CheckSlugResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether the slug is free. */
+                available: boolean;
+            };
+        };
+        ClaimRunnerBackendBody: {
+            /** @description The token from the installation's registration link. */
+            registration_token: string;
+            /**
+             * @description The CloudFormation event the stack is handling.
+             * @enum {string}
+             */
+            request_type: "Create" | "Update" | "Delete";
+            /** @description ARN of the calling stack. */
+            stack_id: string;
+            /** @description The stack's control-plane role. */
+            role_arn: string;
+            /** @description The stack's ECS cluster. */
+            cluster_name: string;
+            /** @description The stack's worker log group. */
+            log_group_name: string;
+            /** @description The stack's job queue prefix. */
+            queue_prefix: string;
+            /** @description Template release. */
+            stack_version: string;
+            /**
+             * Format: date-time
+             * @description When the template release was published.
+             */
+            stack_released_at?: string;
+            /** @description Worker image. */
+            worker_version: string;
+            /** @description Job protocol version. */
+            protocol_version: string;
+            /** @description Optional features the template supports. */
+            capabilities: string[];
+        };
+        ClaimRunnerBackendResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The registered backend, or null when nothing matched. */
+                runner_backend_id: number | null;
+                /** @enum {string|null} */
+                status: "pending" | "active" | "disabled" | null;
+                /** @description What the call did. */
+                message: string;
+            };
+        };
+        CompareBranchesResponse: {
+            /** @description Commits head is ahead by. */
+            ahead: number;
+            /** @description Commits head is behind by. */
+            behind: number;
+            /** @description Number of files changed. */
+            files_changed: number;
+            /** @description Number of commits in the comparison. */
+            total_commits: number;
+            /** @description GitHub compare URL. */
+            comparison_url: string;
+        };
+        ConnectedGithubAccount: {
+            /** @description GitHub numeric user ID. */
+            user_id: string;
+            /** @description GitHub login/username. */
+            username: string;
+            /** @description GitHub display name. */
+            display_name: string | null;
+            /** @description GitHub avatar URL. */
+            avatar_url: string | null;
+        };
+        ConnectedSlackAccount: {
+            /** @description Slack user ID. */
+            user_id: string;
+            /** @description Slack username. */
+            user_name: string | null;
+            /** @description Slack real name. */
+            real_name: string | null;
+            /** @description Slack display name. */
+            display_name: string | null;
+            /** @description Slack avatar image URL. */
+            image_url: string | null;
+            /** @description Slack team (workspace) ID. */
+            team_id: string;
+        };
+        CreateAlarmRequest: {
+            /** @description The note to deliver back into this session when the alarm fires. Write it to your future self: what to resume and any context you'd otherwise lose. */
+            message: string;
+            /** @description How far from now to fire, as a duration string with units m/h/d — e.g. "15m", "2h", "1d", or compound "1h30m". Min 5m, max 72h (3 days). */
+            delay: string;
+        };
+        CreateApiKeyRequest: {
+            /** @description Human-readable name for the API key. */
+            name: string;
+        };
+        CreateCreditGrantRequest: {
+            /** @description Organisation to grant credit to. */
+            org_id: number;
+            /** @description Credit to grant, in US cents (5000 = $50). */
+            amount_cents: number;
+            /**
+             * Format: date-time
+             * @description When the credit expires. The trial plan is extended to this time if it ends earlier.
+             */
+            expires_at: string | null;
+            /** @description Lowercase slug that groups grants for comparison, e.g. `admin_trial`, `high_risk_trial`, `trial_extension`. */
+            campaign: string;
+            /** @description Free-text note on why the credit is granted. */
+            reason?: string;
+            /** @description Trial plan to start the organisation on. Required when it has no trial; omit it when extending one. */
+            plan_id?: number;
+        };
+        CreateCreditOfferRequest: {
+            /**
+             * Format: email
+             * @description Email to reserve the credit for. Pass exactly one of `email`, `email_domain` and `all_work_domains`.
+             */
+            email?: string;
+            /** @description Work email domain to reserve the credit for, e.g. `acme.com`. Public providers like gmail.com are refused. */
+            email_domain?: string;
+            /**
+             * @description Offer the credit to the first organisation created at every work email domain that hasn't had a trial. One such offer can be open at a time.
+             * @enum {boolean}
+             */
+            all_work_domains?: true;
+            /** @description Credit to grant, in US cents (5000 = $50). */
+            amount_cents: number;
+            /** @description Days the credit lasts, counted from the claim. */
+            duration_days: number;
+            /** @description Trial plan to start the organisation on. */
+            plan_id: number;
+            /** @description Lowercase slug the resulting grant is recorded under, e.g. `admin_trial`. */
+            campaign: string;
+            /** @description Free-text note on why the offer is made. */
+            reason?: string;
+            /**
+             * Format: date-time
+             * @description Deadline to claim the offer. Omit for no deadline.
+             */
+            claim_by?: string | null;
+        };
+        CreateDummyNotificationBody: {
+            project_id: number;
+            /**
+             * @default chat_session_waiting
+             * @enum {string}
+             */
+            kind: "chat_session_waiting" | "test_run";
+        };
+        CreateEnvironmentRequest: {
+            /** @description Display name. */
+            name: string;
+            /** @description URL-friendly identifier; unique within the project. */
+            slug: string;
+            /** @description Playwright project names to include. Items must not start with '!'. */
+            playwright_projects_match?: string[];
+            /** @description Playwright project names to exclude. */
+            playwright_projects_ignore?: string[];
+            /** @description Cron expression for scheduled triggers, or null. */
+            scheduled_trigger?: string | null;
+            /** @description Concurrency group and policy scheduled runs are triggered with. Omit to keep the current value; null to fall back to the project's legacy concurrency setting. */
+            scheduled_concurrency?: {
+                /** @description Free-form group key, scoped to the project. */
+                group: string;
+                /**
+                 * @description `cancel` cancels the group's active run and starts; `wait` queues behind it.
+                 * @enum {string}
+                 */
+                on_conflict: "cancel" | "wait";
+            } | null;
+            /** @description Reporter configuration for the environment. Slack channels (`slack_channels` or `slack_channel_ids`) must be active registered channels of the project's organization (GET /api/v2/slack/channels); they are stored as registered ids. */
+            reporter_config?: {
+                /**
+                 * @description Reporter config schema version. Always `1`.
+                 * @enum {number}
+                 */
+                schema_version: 1;
+                /** @description Reporters, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables them. */
+                reporters: ({
+                    /**
+                     * @description Posts run status updates to Slack channels.
+                     * @enum {string}
+                     */
+                    reporter_type: "slack_run_status";
+                    /** @description Slack channel ids (`C…`), as shown in Slack's channel details. Shared (Slack Connect) channels have the same id in every workspace. Each must be a registered, unarchived channel of the project's organization. */
+                    slack_channels?: string[];
+                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`). Can be combined with `slack_channels`. */
+                    slack_channel_ids?: number[];
+                } | {
+                    /**
+                     * @description Posts a GitHub check run on the build commit. Needs `build` with a repository the GitHub Reporter app is installed on.
+                     * @enum {string}
+                     */
+                    reporter_type: "github_check";
+                } | {
+                    /**
+                     * @description Posts (and updates) a comment on the pull request for the build branch. Needs `build` with a repository the GitHub Reporter app is installed on.
+                     * @enum {string}
+                     */
+                    reporter_type: "github_pr_comment";
+                } | {
+                    /**
+                     * @description Emails a report when the run ends to every user whose email domain is one of the organization's email domains.
+                     * @enum {string}
+                     */
+                    reporter_type: "email_run_report";
+                })[];
+            };
+        };
+        CreateFailureGroupRequest: {
+            /** @description Human label for the failure mode (the group_key). */
+            label: string;
+            /**
+             * @description app or test issue.
+             * @enum {string}
+             */
+            type: "app" | "test";
+            /** @description Markdown root-cause summary. */
+            diagnosis: string;
+            /** @description What to do next. */
+            recommendation: string;
+            /** @description Identifying signals for future matching. */
+            fingerprint?: {
+                signals: {
+                    kind: string;
+                    value: string;
+                    /** @enum {string} */
+                    match?: "exact" | "contains" | "glob" | "regex";
+                    weight?: number;
+                    /** @enum {string} */
+                    source: "machine" | "agent" | "human";
+                    data?: {
+                        [key: string]: unknown;
+                    };
+                }[];
+            } | null;
+            /** @description The group's matcher function for future auto-matching. Attribution is derived from the caller, never the body. */
+            matcher?: {
+                /** @description Plain-JS async function source: `async ({ testRun, testCase, traceUtils }) => boolean`. */
+                source: string;
+                /** @description Human-readable summary of what the matcher matches and why; re-articulated on every edit. */
+                description: string;
+                /**
+                 * @description Input-contract version the source was written against.
+                 * @default 1
+                 */
+                contract_version: number;
+            } | null;
+            /** @description Run this diagnosis is based on (provenance). */
+            source_run_id?: number | null;
+        };
+        CreateFileRequest: {
+            /** @description File name. */
+            name: string;
+            /**
+             * @description MIME type. The upload must send the same `Content-Type` header.
+             * @default application/octet-stream
+             */
+            mime_type: string;
+            /** @description File size in bytes. */
+            size_bytes?: number;
+            /** @description Tool call that produced the file, when an agent uploads it. The chat session is taken from the caller's credentials. */
+            origin_tool_call_id?: string;
+        };
+        CreateFileResponse: {
+            /** @description Response payload. */
+            data: {
+                file: components["schemas"]["File"];
+                /** @description Presigned PUT URL, valid for 1 hour. Send the file body with the same `Content-Type` as `mime_type`. */
+                upload_url: string;
+            };
+        };
+        CreateJiraInstallationRequest: {
+            /** @description Organisation the installation belongs to. */
+            org_id: number;
+            /** @description OAuth code from Atlassian's redirect. Required for a signed-in user. */
+            code?: string;
+            /**
+             * Format: uri
+             * @description Redirect URI the authorize request used; Atlassian requires it to match. Required with `code`.
+             */
+            redirect_uri?: string;
+            /** @description Atlassian cloud ID. System callers only. */
+            jira_cloud_id?: string;
+            /**
+             * Format: uri
+             * @description Base URL of the Jira site. System callers only.
+             */
+            jira_site_url?: string;
+            /** @description OAuth access token. System callers only. */
+            jira_access_token?: string;
+            /** @description OAuth refresh token. System callers only. */
+            jira_refresh_token?: string;
+            /**
+             * Format: date-time
+             * @description Expiry of the access token. System callers only.
+             */
+            jira_access_token_expires_at?: string | null;
+            /** @description When true, register the Jira webhook after install. */
+            register_webhook?: boolean;
+        };
+        CreateMemoryRequest: {
+            /** @description Memory content (markdown). */
+            content: string;
+            /** @description Content format version. Defaults to 1. */
+            format_version?: number;
+            /** @description Display name (v2). */
+            name?: string | null;
+            /** @description Short description (v2). */
+            description?: string | null;
+            /** @description Origin of the memory. Free text; "app_knowledge" marks rows migrated from the pre-rename App Knowledge files. */
+            source?: string | null;
+            /** @description Source file path for file-sourced memories; unique within the project. */
+            source_path?: string | null;
+            /** @description Why this change was made (max 500 characters). Shown in the session's memory change report. */
+            reason?: string | null;
+        };
+        CreateOrderFormRequest: {
+            org_id: number;
+            /** @enum {string} */
+            pricing_model: "slab" | "fixed";
+            form_date?: string | null;
+            subscription_start_date?: string | null;
+            term_months?: number | null;
+            end_date?: string | null;
+            status?: string;
+            /** Format: date-time */
+            signed_at?: string | null;
+            contract_currency?: string;
+            pdf_r2_key?: string | null;
+            lines: {
+                /** @enum {string} */
+                kind?: "tier" | "addon";
+                tier?: string | null;
+                label?: string | null;
+                base_price_cents: number;
+                meters?: {
+                    /** @enum {string} */
+                    meter: "test_suite_size" | "ai_credits" | "test_minutes" | "test_run_duration";
+                    included_qty?: number | null;
+                    overage_price_cents?: number | null;
+                }[];
+            }[];
+        };
+        CreateOrgInviteRequest: {
+            /**
+             * Format: email
+             * @description Email address to invite.
+             */
+            email: string;
+        };
+        CreatePlanAssignmentBadRequest: components["schemas"]["ErrorResponse"] | {
+            /** @description Reason the assignment could not be created. */
+            error: string;
+        };
+        CreatePlanAssignmentRequest: {
+            /** @description Organisation this plan assignment belongs to. */
+            org_id: number;
+            /** @description Plan the organisation is on. */
+            plan_id: number;
+            /**
+             * Format: date-time
+             * @description When the assignment starts being effective (timestamptz).
+             */
+            effective_from: string | null;
+            /**
+             * Format: date-time
+             * @description When the assignment stops being effective, or null for open-ended.
+             */
+            effective_to?: string | null;
+            /**
+             * @description Origin of the assignment. Defaults to `manual`.
+             * @enum {string}
+             */
+            source?: "order_form" | "derived_from_invoice" | "manual";
+        };
+        CreatePlanRequest: {
+            /** @description Stable unique key, e.g. `managed`. */
+            key: string;
+            /** @description Display name. */
+            name: string;
+            /**
+             * @description Currency the plan is priced in. Defaults to `usd`.
+             * @enum {string}
+             */
+            currency?: "usd" | "inr" | "aed";
+            /** @description Monthly base price in cents of `currency`. */
+            base_price_cents: number;
+            /** @description Dodo product that bills this plan by subscription, in this environment's Dodo mode. New Dodo checkouts use the newest active `dodo_sync` plan that has one. */
+            dodo_product_id?: string;
+            /** @description Sell the plan through Dodo: its Dodo product is created now if `dodo_product_id` is unset, and it is offered at checkout. Defaults to `false`. */
+            dodo_sync?: boolean;
+            /**
+             * @description Metered allowances, in display order.
+             * @default []
+             */
+            meters: {
+                /**
+                 * @description Meter key from the meter registry. Its unit applies to both `included_qty` and `overage_price_cents`.
+                 * @enum {string}
+                 */
+                meter: "test_suite_size" | "ai_credits" | "test_minutes" | "test_run_duration";
+                /** @description Units included each month. */
+                included_qty?: number | null;
+                /** @description Price per unit above the allowance, in cents; may be fractional. */
+                overage_price_cents?: number | null;
+            }[];
+        };
+        CreateProjectResourceRequest: {
+            /** @description Display name for the file. */
+            name: string;
+            /** @description MIME type of the file. */
+            mime_type?: string;
+            /** @description File size in bytes. */
+            size_bytes?: number;
+            /** @description External URL (e.g. a Google Sheet link). When provided, creates a link-type file with no R2 upload. */
+            url?: string;
+            /** @description Description for the file. */
+            description?: string;
+        };
+        CreateProjectResourceResponse: {
+            /** @description Response payload. */
+            data: {
+                resource: components["schemas"]["ResourceWithUploadUrl"];
+            };
+        };
+        CreateProjectResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The created project. */
+                project: {
+                    /** @description Project ID. */
+                    id: number;
+                    /** @description Project name. */
+                    name: string;
+                    /** @description Repository name. */
+                    repo_name: string;
+                    /** @description Organisation ID. */
+                    org_id: number;
+                    /** @description Project slug. */
+                    slug: string;
+                };
+                /** @description Whether the backing GitHub repo was created. When false the project exists but repo provisioning failed and needs a retry. */
+                repo_created: boolean;
+            };
+        };
+        CreateRealtimeTokenBody: {
+            /** @description Channel names to subscribe to, e.g. `chat-sessions-project-<id>-<env>`, `test-run-<id>-<env>` or `user-<user uuid>-<env>`. */
+            channels: string[];
+        };
+        CreateSandboxSnapshotRequest: {
+            /**
+             * @description Base template to snapshot for the project.
+             * @enum {string}
+             */
+            base_template: "pi-sandbox";
+        };
+        CreateSlackThreadEntityLinkRequest: {
+            /**
+             * @description Entity type to link.
+             * @enum {string}
+             */
+            entity_type: "test_run" | "failure_group";
+            /** @description Test run ID or failure group ID in the scoped project. */
+            entity_id: string;
+            /**
+             * @description Make this thread the preferred thread for the entity in its channel, replacing any previous canonical thread there.
+             * @default false
+             */
+            is_canonical: boolean;
+        };
+        CreateSnoozeRequest: {
+            /** @description Array of Playwright test IDs (41-character hashes) to snooze. */
+            test_ids: string[];
+            /** @description ISO 8601 timestamp for when the snooze should expire. */
+            snooze_until: string;
+            /** @description Optional description explaining why the tests are being snoozed. */
+            description?: string;
+            /** @description Optional user identifier for the snooze creator. Set automatically for dashboard users. */
+            created_by?: string;
+            /** @description Environment ID to scope the snooze to. If omitted, applies to all environments. */
+            scoped_to_environment_id?: number;
+            /** @description ID of the test run this snooze was created from, if applicable. */
+            created_from_test_run_id?: string | number;
+        };
+        CreateSystemMessageRequest: {
+            body: string;
+            project_ids?: number[];
+        };
+        CreateSystemMessageResponse: {
+            data: {
+                system_message: components["schemas"]["SystemMessage"];
+                recipients: components["schemas"]["SystemMessageRecipient"][];
+                skipped_project_ids: number[];
+            };
+        };
+        CreateTaskError: {
+            /** @description Always null for error responses. */
+            data: unknown;
+            /** @description Error details. */
+            error: {
+                /** @description Human-readable error message. */
+                message: string;
+                /** @description Required fields that were missing or empty. */
+                missingFields?: string[];
+            };
+        };
+        CreateTaskRequest: {
+            /** @description Task title. */
+            title: string;
+            /** @description Task description (Markdown). */
+            description: string;
+            /** @description Where the task came from, e.g. `linear` or `dashboard`. */
+            source: string;
+            /** @description Identifier of the task in its source system. */
+            source_identifier: string;
+            /**
+             * @description Initial status; defaults to `open`.
+             * @enum {string}
+             */
+            status?: "draft" | "open" | "in-review" | "closed" | "resolved";
+            /** @description User ID of the person the task is for. Defaults to the signed-in user, or to the person who started the calling agent's session. Pass it when acting for someone else; there must be a person. */
+            created_by?: string;
+        };
+        CreateTaskResponse: {
+            /** @description Response payload. */
+            data: {
+                task: components["schemas"]["Task"];
+            };
+        };
+        CreateTestRunResponse: {
+            data: {
+                trigger: {
+                    /** @description Whether the test run was triggered successfully. */
+                    success: boolean;
+                };
+                test_run: {
+                    /** @description Unique identifier for the test run. */
+                    id: number;
+                    /** @description Current state of the test run. */
+                    state: string;
+                    /** @description Normalized error code when branch resolution or execution failed. */
+                    error_code: string | null;
+                    /** @description Git branch being tested. */
+                    test_run_branch: string;
+                    /** @description ISO 8601 timestamp when the run was created. */
+                    created_at: string;
+                    /** @description Concurrency group and policy the run was created with, or null when no limit applied. */
+                    concurrency: {
+                        /** @description Concurrency group the run was scoped to. Runs in the same group are limited to one in progress at a time. */
+                        group: string;
+                        /**
+                         * @description What this run did when the group already had an active run: `cancel` cancelled it, `wait` queued behind it.
+                         * @enum {string}
+                         */
+                        on_conflict: "cancel" | "wait";
+                    } | null;
+                    /** @description Requested, resolved, and executed test-repository code. */
+                    test_code: {
+                        requested: {
+                            branch: string;
+                            /** @enum {string} */
+                            source: "explicit" | "build" | "project_default" | "legacy";
+                            /** @enum {string} */
+                            if_missing: "error" | "use_default" | "create";
+                        };
+                        resolved: {
+                            branch: string | null;
+                            sha: string | null;
+                            /** @enum {string|null} */
+                            fallback_reason: "requested_branch_missing" | null;
+                        };
+                        execution: {
+                            ref: string | null;
+                            sha: string | null;
+                            /** @enum {string|null} */
+                            ref_kind: "branch" | "temporary_merge" | null;
+                        };
+                        merge_base: {
+                            branch: string;
+                            sha: string | null;
+                        } | null;
+                        /** @enum {string} */
+                        resolution_status: "pending" | "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
+                        resolution_error_code: string | null;
+                    } | null;
+                    /** @description The `trigger` the run was created with, or null when none was sent. */
+                    trigger: {
+                        /**
+                         * @description Event that produced the run.
+                         * @enum {string}
+                         */
+                        event: "pull_request";
+                        /** @description Pull request under test. */
+                        pull_request: {
+                            /** @description Pull request number in the application repository. */
+                            number?: number;
+                            /** @description Head branch. */
+                            head: string;
+                            /** @description Base branch. */
+                            base: string;
+                        };
+                    } | null;
+                };
+            };
+        };
+        CreateWebhookRequest: {
+            /**
+             * Format: uri
+             * @description HTTPS endpoint that will receive event payloads.
+             */
+            url: string;
+            /** @description Event names this webhook subscribes to. */
+            events: string[];
+        };
+        CreatedProjectApiKey: {
+            /** @description API key ID. */
+            id: number;
+            /** @description Project the key belongs to. */
+            project_id: number | null;
+            /** @description Human-readable name for the key. */
+            name: string;
+            /** @description User ID of the creator, if known. */
+            created_by: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string | null;
+            /** @description ISO 8601 timestamp the key was last updated. */
+            updated_at: string | null;
+            /** @description User ID of the last updater, if known. */
+            updated_by: string | null;
+            /** @description ISO 8601 timestamp the key was last used. */
+            last_used_at: string | null;
+            /** @description Whether the key is disabled. */
+            is_disabled: boolean | null;
+            /** @description Whether the key is an internal service key. */
+            is_internal: boolean | null;
+            /** @description Resolved details for the creating user, if available. */
+            created_by_user_detail: {
+                /** @description User ID. */
+                id: string;
+                /** @description User email. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description User avatar URL. */
+                picture: string;
+            } | null;
+            /** @description Resolved details for the last updating user, if available. */
+            updated_by_user_detail: {
+                /** @description User ID. */
+                id: string;
+                /** @description User email. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description User avatar URL. */
+                picture: string;
+            } | null;
+            /** @description The full API key secret (returned only once). */
+            api_key: string;
+        };
+        CreatedWebhook: {
+            /** @description Webhook ID. */
+            id: number;
+            /** @description Project the webhook belongs to. */
+            project_id: number;
+            /** @description Endpoint that receives event payloads. */
+            url: string;
+            /** @description Event names this webhook subscribes to. */
+            events: string[];
+            /** @description Whether the webhook is active. */
+            is_active: boolean;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 last-update timestamp. */
+            updated_at: string;
+            /** @description Signing secret (returned only on creation). */
+            secret: string;
+        };
+        CreditGrant: {
+            /** @description Credit grant ID. */
+            id: number;
+            /** @description Organisation the credit was granted to. */
+            org_id: number;
+            /** @description Credit granted, in US cents. */
+            amount_cents: number;
+            /** @description ISO-8601 timestamp the credit starts. */
+            starts_at: string;
+            /** @description ISO-8601 timestamp the credit expires. */
+            expires_at: string;
+            /** @description Slug that groups grants for comparison, e.g. `admin_trial` or `trial_extension`. */
+            campaign: string;
+            /** @description Free-text note on why the credit was granted. */
+            reason: string | null;
+            /** @description ID of the user or service that granted it. */
+            granted_by: string | null;
+            /** @description Usage taken from this grant, in US cents; null when the organisation isn't on a trial. */
+            used_cents: number | null;
+            /** @description Credit left on this grant, in US cents; null when the organisation isn't on a trial. */
+            remaining_cents: number | null;
+            /** @description ISO-8601 creation timestamp. */
+            created_at: string;
+        };
+        CreditGrantListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The organisation's grants, oldest first. */
+                credit_grants: components["schemas"]["CreditGrant"][];
+                /** @description Credit left on grants active now, in US cents; null when the organisation isn't on a trial. */
+                balance_cents: number | null;
+                /** @description Trial usage beyond every grant, in US cents; null when the organisation isn't on a trial. */
+                uncovered_cents: number | null;
+            };
+        };
+        CreditGrantResponse: {
+            /** @description Response payload. */
+            data: {
+                credit_grant: components["schemas"]["CreditGrant"];
+                /** @description ISO-8601 timestamp the organisation's trial plan now ends, or null for open-ended. */
+                trial_ends_at: string | null;
+            };
+        };
+        CreditOffer: {
+            /** @description Credit offer ID. */
+            id: number;
+            audience: components["schemas"]["CreditOfferAudience"];
+            /** @description Email the offer is for; null unless `audience` is `email`. */
+            email: string | null;
+            /** @description Email domain the offer is for; null unless `audience` is `email_domain`. The first organisation created by anyone at the domain claims it. */
+            email_domain: string | null;
+            /** @description Credit to grant, in US cents. */
+            amount_cents: number;
+            /** @description Days the credit lasts, counted from the claim. */
+            duration_days: number;
+            /** @description Trial plan the organisation starts on. */
+            plan_id: number;
+            /** @description Campaign slug the resulting grant is recorded under. */
+            campaign: string;
+            /** @description Free-text note on why the offer was made. */
+            reason: string | null;
+            /** @description ISO-8601 timestamp after which the offer can't be claimed, or null for no deadline. */
+            claim_by: string | null;
+            status: components["schemas"]["CreditOfferStatus"];
+            /** @description ID of the user or service that made the offer. */
+            created_by: string | null;
+            /** @description ISO-8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO-8601 timestamp the offer was revoked. */
+            revoked_at: string | null;
+            /** @description ISO-8601 timestamp the offer was claimed. A `work_domains` offer is never claimed; each grant it makes links back to it. */
+            claimed_at: string | null;
+            /** @description Organisation that claimed the offer. */
+            claimed_org_id: number | null;
+            /** @description Credit grant created by the claim. */
+            claimed_grant_id: number | null;
+        };
+        /**
+         * @description Who the offer covers: one `email`, one `email_domain`, or `work_domains`, every email domain that isn't a public provider and hasn't had a trial yet.
+         * @enum {string}
+         */
+        CreditOfferAudience: "email" | "email_domain" | "work_domains";
+        CreditOfferListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description All credit offers, newest first. */
+                credit_offers: components["schemas"]["CreditOffer"][];
+            };
+        };
+        CreditOfferResponse: {
+            /** @description Response payload. */
+            data: {
+                credit_offer: components["schemas"]["CreditOffer"];
+            };
+        };
+        /** @enum {string} */
+        CreditOfferStatus: "open" | "claimed" | "revoked" | "expired";
+        CurrentUserResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description User ID. */
+                id: string;
+                /** @description Email address on the session. */
+                email: string | null;
+                /** @description Organizations the user belongs to. */
+                org_ids: number[];
+                /** @description Whether the user can access every org. */
+                is_super_admin: boolean;
+            };
+        };
+        DashboardBanner: {
+            /** @enum {string} */
+            kind: "unpaid_invoices";
+            params: {
+                /** @description Sent invoices still unpaid at least a day past their due date. */
+                overdue_count: number;
+                /** @description How many of those are past the billing gate's overdue threshold. */
+                escalated_count: number;
+            };
+            /** @description Higher shows first; the dashboard shows one at a time. */
+            priority: number;
+            /** @description Null when the banner can't be dismissed. */
+            dismissal: {
+                /** @description Stable for the fact the banner is about; a new fact (period, limit, missing scopes) makes a new key. */
+                key: string;
+                /** @description How long a dismissal lasts; null means until the key changes. */
+                ttl_seconds: number | null;
+            } | null;
+            desktop_only: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "renewal_failed";
+            params: Record<string, never>;
+            /** @description Higher shows first; the dashboard shows one at a time. */
+            priority: number;
+            /** @description Null when the banner can't be dismissed. */
+            dismissal: {
+                /** @description Stable for the fact the banner is about; a new fact (period, limit, missing scopes) makes a new key. */
+                key: string;
+                /** @description How long a dismissal lasts; null means until the key changes. */
+                ttl_seconds: number | null;
+            } | null;
+            desktop_only: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "usage_limit_reached";
+            params: {
+                /** @description The limit as a bill: plan price + cap. */
+                limit_bill_cents: number;
+            };
+            /** @description Higher shows first; the dashboard shows one at a time. */
+            priority: number;
+            /** @description Null when the banner can't be dismissed. */
+            dismissal: {
+                /** @description Stable for the fact the banner is about; a new fact (period, limit, missing scopes) makes a new key. */
+                key: string;
+                /** @description How long a dismissal lasts; null means until the key changes. */
+                ttl_seconds: number | null;
+            } | null;
+            desktop_only: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "usage_limit_warning";
+            params: {
+                /** @description Plan price + overage so far, as last evaluated. */
+                bill_cents: number;
+                /** @description The limit as a bill: plan price + cap. */
+                limit_bill_cents: number;
+                /** @enum {string} */
+                period_kind: "month" | "cycle";
+                period_start: string;
+                /** @description Exclusive (ISO 8601). */
+                period_end: string;
+            };
+            /** @description Higher shows first; the dashboard shows one at a time. */
+            priority: number;
+            /** @description Null when the banner can't be dismissed. */
+            dismissal: {
+                /** @description Stable for the fact the banner is about; a new fact (period, limit, missing scopes) makes a new key. */
+                key: string;
+                /** @description How long a dismissal lasts; null means until the key changes. */
+                ttl_seconds: number | null;
+            } | null;
+            desktop_only: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "jira_reauthorization";
+            params: {
+                installation_id: number;
+            };
+            /** @description Higher shows first; the dashboard shows one at a time. */
+            priority: number;
+            /** @description Null when the banner can't be dismissed. */
+            dismissal: {
+                /** @description Stable for the fact the banner is about; a new fact (period, limit, missing scopes) makes a new key. */
+                key: string;
+                /** @description How long a dismissal lasts; null means until the key changes. */
+                ttl_seconds: number | null;
+            } | null;
+            desktop_only: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "slack_permissions";
+            params: {
+                team_id: string;
+                missing_scopes: string[];
+            };
+            /** @description Higher shows first; the dashboard shows one at a time. */
+            priority: number;
+            /** @description Null when the banner can't be dismissed. */
+            dismissal: {
+                /** @description Stable for the fact the banner is about; a new fact (period, limit, missing scopes) makes a new key. */
+                key: string;
+                /** @description How long a dismissal lasts; null means until the key changes. */
+                ttl_seconds: number | null;
+            } | null;
+            desktop_only: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "no_billing_plan";
+            params: {
+                /** @description Whether the org's last plan was a trial that has ended. */
+                trial_ended: boolean;
+            };
+            /** @description Higher shows first; the dashboard shows one at a time. */
+            priority: number;
+            /** @description Null when the banner can't be dismissed. */
+            dismissal: {
+                /** @description Stable for the fact the banner is about; a new fact (period, limit, missing scopes) makes a new key. */
+                key: string;
+                /** @description How long a dismissal lasts; null means until the key changes. */
+                ttl_seconds: number | null;
+            } | null;
+            desktop_only: boolean;
+        };
+        DashboardBannersResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Active banners, highest priority first. */
+                banners: components["schemas"]["DashboardBanner"][];
+            };
+        };
+        DeleteFailureGroupResponse: {
+            /** @description Response payload. */
+            data: {
+                id: string;
+                deleted: boolean;
+            };
+        };
+        DeleteMemoryRequest: {
+            /** @description Why this change was made (max 500 characters). Shown in the session's memory change report. */
+            reason?: string | null;
+        };
+        DeleteProjectResourceResponse: {
+            /** @description Response payload. */
+            data: {
+                result: {
+                    /** @description Whether the deletion was successful. */
+                    success: boolean;
+                };
+            };
+        };
+        DeletedTaskResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The deleted task. */
+                task: {
+                    /** @description Deleted task ID. */
+                    id: number;
+                };
+            };
+        };
+        DisconnectRunnerBackendResponse: {
+            /** @description Response payload. */
+            data: {
+                runner_backend: components["schemas"]["RunnerBackend"];
+                /** @description Projects moved back to Empirical-hosted runs. */
+                unlinked_project_ids: number[];
+            };
+        };
+        DodoOrgInvoice: {
+            /**
+             * @description An invoice Dodo issued for a payment. (enum property replaced by openapi-typescript)
+             * @enum {string}
+             */
+            source: "dodo";
+            /** @description Dodo payment ID. */
+            id: string;
+            /** @description Dodo invoice ID. */
+            number: string;
+            /** @description ISO 8601 payment date. */
+            issue_date: string;
+            /** @description Payment currency code. */
+            currency: string;
+            /** @description Amount paid in minor units, tax included. */
+            amount_in_cents: number;
+            /** @description ISO 8601 payment date. */
+            paid_at: string;
+            /** @description Dodo's invoice PDF URL. */
+            pdf_url: string | null;
+        };
+        DodoWebhookAckResponse: {
+            /** @description Acknowledgement. */
+            message: string;
+        };
+        DummyNotificationResponse: {
+            /** @description Response payload. */
+            data: {
+                id: number;
+            };
+        };
+        EmpiricalOrgInvoice: {
+            /**
+             * @description An invoice we issued (order-form billing). (enum property replaced by openapi-typescript)
+             * @enum {string}
+             */
+            source: "empirical";
             /** @description Invoice ID. */
             id: number;
             /** @description Invoice number. */
@@ -5390,17 +8464,385 @@ export interface components {
             paid_at: string | null;
             /** @description Whether the invoice PDF is available. */
             has_pdf: boolean;
-            /** @description Whether a payment-processor tax invoice is available for download. */
-            has_tax_invoice: boolean;
             /** @description Whether this invoice can be paid online (unpaid and in a supported currency). */
             payable: boolean;
             /**
-             * @description Which provider pays this invoice's currency (USD via Dodo checkout sessions, INR via Razorpay Standard Checkout), or null if none does. Drives the Pay button's checkout flow.
+             * @description Which provider pays this invoice's currency (INR via Razorpay Standard Checkout), or null if none does. Drives the Pay button's checkout flow.
              * @enum {string|null}
              */
-            payment_provider: "dodo" | "razorpay" | null;
+            payment_provider: "razorpay" | null;
             /** @description Whether an unpaid invoice is past its due date plus the reminder grace period. Always false for paid invoices. */
             past_reminder_date: boolean;
+        };
+        EnableProjectAddonRequest: {
+            /**
+             * Format: date-time
+             * @description Backdate the period to this ISO timestamp. Super admin only; defaults to now.
+             */
+            effective_from?: string;
+            /** @description Add-on plan (kind='addon') this period bills against. Super admin only. */
+            plan_id?: number;
+        };
+        EnqueueTestCasesSyncRequest: {
+            /** @description Project whose test cases should be synced. */
+            project_id: number;
+            /** @description Commit SHA to sync test cases from. */
+            commit_sha: string;
+            /** @description Base branch the commit belongs to. */
+            base_branch: string;
+        };
+        EnqueueTestCasesSyncResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Always true once the job is enqueued. */
+                queued: boolean;
+            };
+        };
+        EnrichedEnvironmentVariable: {
+            /** @description Environment variable ID. */
+            id: number;
+            /** @description ID of the project the variable belongs to. */
+            project_id: number;
+            /** @description Variable name. */
+            name: string;
+            /** @description Human-readable description. */
+            description: string;
+            /** @description Variable value. */
+            value: string;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 last-update timestamp. */
+            updated_at: string;
+            /** @description Supabase user ID of the last editor, or null. */
+            updated_by: string | null;
+            /** @description Whether the variable applies to all environments. */
+            all_environments: boolean;
+            /** @description Environment IDs this variable is scoped to. */
+            environment_ids: number[];
+            /** @description Details of the last editor, or null if unknown. */
+            updated_by_user: {
+                /** @description User ID. */
+                id: string;
+                /** @description User email address. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description URL to user avatar image. */
+                picture: string;
+            } | null;
+        };
+        EnrichedTestRun: {
+            /** @description Test run database ID. */
+            id: number;
+            /** @description External run_id, if assigned. */
+            run_id: number | null;
+            /** @description ECS task ID running the run, if dispatched. */
+            ecs_task_id: string | null;
+            /** @description AWS region of the ECS task, if dispatched. */
+            ecs_task_region: string | null;
+            /** @description Owning project ID. */
+            project_id: number;
+            /** @description Total number of test cases. */
+            total_count: number | null;
+            /** @description Number of unique test cases. */
+            unique_count: number | null;
+            /** @description Number of passed tests. */
+            success_count: number | null;
+            /** @description Number of failed tests. */
+            failed_count: number | null;
+            /** @description Failed tests remaining after applying snoozes. */
+            failed_count_after_snoozing: number | null;
+            /** @description Number of skipped tests. */
+            skipped_count: number | null;
+            /** @description Number of flaky tests. */
+            flaky_count: number | null;
+            /** @description ISO 8601 timestamp when tests started. */
+            run_started_at: string | null;
+            /** @description ISO 8601 timestamp when tests ended. */
+            run_ended_at: string | null;
+            /** @description Run duration in milliseconds. */
+            duration: number | null;
+            /** @description Test repo branch the run executed. */
+            test_run_branch: string;
+            /** @description Head commit SHA of the test repo. */
+            test_run_head_sha: string | null;
+            /** @description Structured test-code provenance. Null for runs created before provenance capture shipped. */
+            test_code: {
+                requested: {
+                    branch: string;
+                    /** @enum {string} */
+                    source: "explicit" | "build" | "project_default" | "legacy";
+                    /** @enum {string} */
+                    if_missing: "error" | "use_default" | "create";
+                };
+                resolved: {
+                    branch: string | null;
+                    sha: string | null;
+                    /** @enum {string|null} */
+                    fallback_reason: "requested_branch_missing" | null;
+                };
+                execution: {
+                    ref: string | null;
+                    sha: string | null;
+                    /** @enum {string|null} */
+                    ref_kind: "branch" | "temporary_merge" | null;
+                };
+                merge_base: {
+                    branch: string;
+                    sha: string | null;
+                } | null;
+                /** @enum {string} */
+                resolution_status: "pending" | "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
+                resolution_error_code: string | null;
+            } | null;
+            /** @description URL of the Playwright JSON report. */
+            summary_url: string | null;
+            /** @description Current run state (queued, started, ended, ...). */
+            state: string | null;
+            /** @description Associated build row ID, if any. */
+            build_id: number | null;
+            /** @description Environment row ID, if any. */
+            environment_id: number | null;
+            /** @description Arbitrary run metadata key/value pairs. */
+            metadata: {
+                [key: string]: string;
+            } | null;
+            /** @description ISO 8601 timestamp the run was created. */
+            created_at: string | null;
+            /** @description User ID that created the run. */
+            created_by: string | null;
+            /** @description User agent that created the run. */
+            created_by_user_agent: string | null;
+            /** @description Environment display name. */
+            environment_name: string | null;
+            /** @description Environment slug. */
+            environment_slug: string | null;
+            /** @description Build commit SHA. */
+            commit: string | null;
+            /** @description Build branch name. */
+            branch: string | null;
+            /** @description Build repository in `org/repo` form. */
+            repo: string | null;
+            /** @description Git branch of the build. */
+            build_branch: string | null;
+            /** @description URL of the deployment tested, i.e. the run's resolved `BUILD_URL` environment variable. */
+            build_url: string | null;
+            /** @description GitHub actor that triggered the run. */
+            github_actor: string | null;
+            /** @description Run-level environment variable overrides. */
+            environment_variables_overrides: {
+                name: string;
+                value: string;
+            }[] | null;
+            /** @description Head branch of the merge commit, if any. */
+            merge_commit_head_branch: string | null;
+            /** @description Base branch of the merge commit, if any. */
+            merge_commit_base_branch: string | null;
+            /** @description Whether the merge commit succeeded. */
+            merge_commit_successful: boolean | null;
+            /** @description Error code if the run failed. */
+            error_code: string | null;
+            /** @description Reason the run was cancelled, if any. */
+            cancellation_reason: string | null;
+            /** @description User ID that cancelled the run, if any. */
+            cancelled_by_user_id: string | null;
+            /** @description ID of the run this run is a rerun of, if any. */
+            rerun_source_id: number | null;
+            /** @description Whether the rerun re-ran only failed tests. */
+            rerun_only_failed: boolean | null;
+            /** @description Feature flags active for this run. */
+            feature_flags: string[];
+            /** @description Artifact storage bucket for the run. */
+            storage_bucket: string | null;
+            /** @description ID of the run that supersedes this one, if any. */
+            superseded_by_test_run_id: number | null;
+            /** @description Tags applied to the run. */
+            tags: string[] | null;
+            /** @description Tags whose tests the run skips. */
+            exclude_tags: string[] | null;
+            /** @description Specific test case ids (Playwright test.id) to run. */
+            test_case_ids: string[] | null;
+            /** @description Concurrency group and policy the run was created with; null when no limit applied. */
+            concurrency: {
+                /** @description Concurrency group the run was scoped to. */
+                group: string;
+                /**
+                 * @description Policy toward an active run in the group: cancel it, or wait behind it.
+                 * @enum {string}
+                 */
+                on_conflict: "cancel" | "wait";
+            } | null;
+            /** @description The `trigger` the run was created with, or null when none was sent. */
+            trigger: {
+                /**
+                 * @description Event that produced the run.
+                 * @enum {string}
+                 */
+                event: "pull_request";
+                /** @description Pull request under test. */
+                pull_request: {
+                    /** @description Pull request number in the application repository. */
+                    number?: number;
+                    /** @description Head branch. */
+                    head: string;
+                    /** @description Base branch. */
+                    base: string;
+                };
+            } | null;
+            /** @description Resolved details for the user that created the run. */
+            created_by_user_detail: {
+                /** @description Supabase user ID. */
+                id: string;
+                /** @description User email address. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description User avatar URL. */
+                picture: string;
+            } | null;
+        };
+        Environment: {
+            /** @description Unique identifier. */
+            id: number;
+            /** @description Project identifier. */
+            project_id: number;
+            /** @description URL-friendly identifier. */
+            slug: string;
+            /** @description Display name. */
+            name: string;
+            /** @description Playwright project names to match. */
+            playwright_projects_match: string[];
+            /** @description Playwright project names to ignore. */
+            playwright_projects_ignore: string[];
+            /** @description Whether the environment is disabled. */
+            is_disabled: boolean | null;
+            /** @description Environment file paths. */
+            env_files: string[];
+            /** @description Cron expression for scheduled triggers. */
+            scheduled_trigger: string | null;
+            /** @description Concurrency group and policy scheduled runs are triggered with; null uses the project's legacy concurrency setting. */
+            scheduled_concurrency: {
+                /** @description Concurrency group key. */
+                group: string;
+                /**
+                 * @description Policy toward an active run in the group.
+                 * @enum {string}
+                 */
+                on_conflict: "cancel" | "wait";
+            } | null;
+            /** @description Reporter configuration for runs in this environment. */
+            reporter_config: {
+                /**
+                 * @description Reporter config schema version. Always `1`.
+                 * @enum {number}
+                 */
+                schema_version: 1;
+                /** @description Reporters, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables them. */
+                reporters: ({
+                    /**
+                     * @description Posts run status updates to Slack channels.
+                     * @enum {string}
+                     */
+                    reporter_type: "slack_run_status";
+                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`, not the Slack `C…` channel id). Must belong to the project's organization and not be archived. Deduplicated and sorted on save. */
+                    slack_channel_ids: number[];
+                } | {
+                    /**
+                     * @description Posts a GitHub check run on the build commit. Needs `build` with a repository the GitHub Reporter app is installed on.
+                     * @enum {string}
+                     */
+                    reporter_type: "github_check";
+                } | {
+                    /**
+                     * @description Posts (and updates) a comment on the pull request for the build branch. Needs `build` with a repository the GitHub Reporter app is installed on.
+                     * @enum {string}
+                     */
+                    reporter_type: "github_pr_comment";
+                } | {
+                    /**
+                     * @description Emails a report when the run ends to every user whose email domain is one of the organization's email domains.
+                     * @enum {string}
+                     */
+                    reporter_type: "email_run_report";
+                })[];
+            };
+            /** @description ISO 8601 timestamp. */
+            created_at: string | null;
+            /** @description ISO 8601 timestamp. */
+            updated_at: string | null;
+        };
+        EnvironmentDeleteResponse: {
+            /** @description Always true on success. */
+            success: boolean;
+        };
+        EnvironmentMutationError: {
+            /** @description Error, returned as a bare string or a `{ message }` object (legacy shape). */
+            error: string | {
+                /** @description Error message. */
+                message: string;
+            };
+        };
+        EnvironmentResponse: {
+            /** @description Response payload. */
+            data: {
+                environment: components["schemas"]["Environment"];
+            };
+        };
+        EnvironmentSyncResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Always true on success. */
+                success: boolean;
+            };
+        };
+        EnvironmentVariable: {
+            /** @description Environment variable ID. */
+            id: number;
+            /** @description ID of the project the variable belongs to. */
+            project_id: number;
+            /** @description Variable name. */
+            name: string;
+            /** @description Human-readable description. */
+            description: string;
+            /** @description Variable value. */
+            value: string;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 last-update timestamp. */
+            updated_at: string;
+            /** @description Supabase user ID of the last editor, or null. */
+            updated_by: string | null;
+            /** @description Whether the variable applies to all environments. */
+            all_environments: boolean;
+            /** @description Environment IDs this variable is scoped to. */
+            environment_ids: number[];
+        };
+        EnvironmentVariableListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The project's environment variables. */
+                environment_variables: components["schemas"]["EnrichedEnvironmentVariable"][];
+            };
+        };
+        EnvironmentVariableResponse: {
+            /** @description Response payload. */
+            data: {
+                environment_variable: components["schemas"]["EnvironmentVariable"];
+            };
+        };
+        EnvironmentVariableSuccessResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Always true on success. */
+                success: boolean;
+            };
+        };
+        EnvironmentVariablesResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The resulting environment variables. */
+                environment_variables: components["schemas"]["EnvironmentVariable"][];
+            };
         };
         ErrorResponse: {
             /** @description Always null for error responses. */
@@ -5411,21 +8853,993 @@ export interface components {
                 message: string;
             };
         };
-        InvoiceCheckoutSessionResponse: {
+        FailureGroup: {
+            id: string;
+            project_id: number;
+            label: string;
+            /** @enum {string} */
+            type: "app" | "test" | "unknown";
+            /** @enum {string} */
+            status: "open" | "resolved";
+            diagnosis: string | null;
+            recommendation: string | null;
+            fingerprint: components["schemas"]["Fingerprint"];
+            matcher: components["schemas"]["FailureGroupMatcher"];
+            resolved_at: string | null;
+            first_seen_at: string;
+            last_seen_at: string;
+            last_test_run_id: number | null;
+            created_at: string;
+            updated_at: string;
+        };
+        FailureGroupActivityEvent: {
+            id: string;
+            /** @enum {string} */
+            type: "created" | "edited" | "status_changed" | "merged" | "member_added" | "member_seen" | "member_removed";
+            at: string;
+            source_run_id: number | null;
+            changed_fields: string[] | null;
+            from_status: string | null;
+            to_status: string | null;
+            merged_from_group_id: string | null;
+            merged_from_label: string | null;
+            member: {
+                /** @description Test case ID (normalized 41-character Playwright test id). */
+                test_case_id: string;
+                environment_id: number | null;
+                match_source: string | null;
+                match_score: number | null;
+                /** @description For agent-attached members, the chat session that decided the attach. */
+                chat_session_id: number | null;
+            } | null;
+            /** @description Who authored the change. Null on machine-driven member events and on changes made before attribution existed. */
+            actor: {
+                /** @enum {string} */
+                kind: "user" | "agent" | "api_key" | "system";
+                id: string | null;
+                name: string | null;
+                email: string | null;
+            } | null;
+        };
+        FailureGroupActivityResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Single-use hosted checkout URL (expires in 24h). */
-                checkout_url: string;
-                /** @description Dodo checkout session ID. */
-                session_id: string;
+                events: components["schemas"]["FailureGroupActivityEvent"][];
             };
         };
-        CreateInvoiceCheckoutSessionRequest: {
+        FailureGroupConflictResponse: {
+            data: {
+                failure_group: components["schemas"]["FailureGroup"];
+            };
+            error: {
+                message: string;
+            };
+        };
+        FailureGroupDetachMemberResponse: {
+            /** @description Response payload. */
+            data: {
+                group_id: string;
+                test_case_id: string;
+                detached: boolean;
+            };
+        };
+        FailureGroupListResponse: {
+            data: {
+                failure_groups: components["schemas"]["FailureGroup"][];
+            };
+            pagination: components["schemas"]["Pagination"];
+        };
+        FailureGroupMatcher: {
+            /** @description Plain-JS async function source: `async ({ testRun, testCase, traceUtils }) => boolean`. */
+            source: string;
+            /** @description Human-readable summary of what the matcher matches and why; re-articulated on every edit. */
+            description: string;
+            /**
+             * @description Input-contract version the source was written against.
+             * @default 1
+             */
+            contract_version: number;
+        } | null;
+        FailureGroupMemberEntry: {
+            /** @description Test case ID (normalized 41-character Playwright test id). */
+            test_case_id: string;
+            /** @enum {string} */
+            state: "active" | "detached";
+            /** @enum {string} */
+            source: "machine" | "agent" | "human" | "system";
+            first_seen_at: string;
+            first_test_run_id: number | null;
+            last_seen_at: string;
+            last_test_run_id: number | null;
+            last_environment_id: number | null;
+            environments: number[];
+            sighting_count: number;
+            chat_session_id: number | null;
+            match_run_id: string | null;
+            actor_id: string | null;
+            detached_at: string | null;
+            detached_by: string | null;
+        };
+        FailureGroupMemberResponse: {
+            /** @description Response payload. */
+            data: {
+                member: components["schemas"]["FailureGroupMemberEntry"];
+            };
+        };
+        FailureGroupMembersResponse: {
+            /** @description Response payload. */
+            data: {
+                members: components["schemas"]["FailureGroupMemberEntry"][];
+                total: number;
+                page: number;
+                per_page: number;
+            };
+        };
+        FailureGroupResponse: {
+            /** @description Response payload. */
+            data: {
+                failure_group: components["schemas"]["FailureGroup"];
+            };
+        };
+        File: {
+            /** @description File ID. */
+            id: number;
+            /** @description Stored file name. */
+            name: string;
+            /** @description Link to the file. */
+            url: string;
+            /** @description MIME type. */
+            mime_type: string | null;
+            /** @description File size in bytes, when known. */
+            size_bytes: number | null;
+            /**
+             * @description `pending` until the upload to `upload_url` is confirmed with `PATCH /api/files/{id}`.
+             * @enum {string}
+             */
+            status: "pending" | "uploaded";
+            /** @description Chat session the file came from, if an agent created it. */
+            origin_chat_session_id: number | null;
+            /** @description Tool call that produced the file, when known. */
+            origin_tool_call_id: string | null;
+            /** @description ISO 8601 creation time. */
+            created_at: string;
+        };
+        FileResponse: {
+            /** @description Response payload. */
+            data: {
+                file: components["schemas"]["File"];
+            };
+        };
+        Fingerprint: {
+            signals: {
+                kind: string;
+                value: string;
+                /** @enum {string} */
+                match?: "exact" | "contains" | "glob" | "regex";
+                weight?: number;
+                /** @enum {string} */
+                source: "machine" | "agent" | "human";
+                data?: {
+                    [key: string]: unknown;
+                };
+            }[];
+        } | null;
+        FixtureLoginEmailRequest: {
+            /**
+             * Format: email
+             * @description Recipient; must be an @empiricalrun.email address.
+             */
+            to: string;
+            /** @description Six-digit login code. */
+            code: string;
             /**
              * Format: uri
-             * @description Dashboard URL Dodo redirects to after payment (gets payment_id and status query params appended).
+             * @description Magic link that signs the recipient in.
              */
-            return_url: string;
+            link: string;
+        };
+        FixtureLoginEmailResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Resend email id. */
+                email_id: string;
+            };
+        };
+        FlagsResponse: {
+            /** @description Response payload. */
+            data: {
+                [key: string]: boolean | string;
+            };
+        };
+        GetTestCaseResponse: {
+            /** @description Response payload. */
+            data: {
+                test_case: components["schemas"]["TestCase"];
+            };
+        };
+        GetTestRunCaseResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Playwright test ID; the case's URL id. Null for a ledger row that never matched a scheduled entry. */
+                pw_test_id: string | null;
+                /** @description Shard index (1+) for a sharded run; null for a non-sharded run. */
+                shard_index: number | null;
+                /** @description ID of the parent test run. */
+                test_run_id: string;
+                /**
+                 * @description Outcome of the case. Provisional while `is_retrying` is true.
+                 * @enum {string}
+                 */
+                status: "passed" | "failed" | "flaky" | "skipped";
+                /** @description True when the case has retries outstanding: `status`, `retries` and `retry_details` reflect only the attempts so far. Only returned with `include_retrying=true`. */
+                is_retrying: boolean;
+                /** @description Run-time path `[file, ...suites, title]`. */
+                nesting: string[];
+                /** @description Playwright project the case ran under. */
+                test_project: string | null;
+                /** @description Number of retries; null when not recorded. */
+                retries: number | null;
+                /** @description Total duration in milliseconds. */
+                total_duration: number | null;
+                /** @description Expected (7-day average) duration in ms. */
+                expected_duration_ms: number | null;
+                /** @description Raw Playwright retry details; null if absent. */
+                retry_details: {
+                    /** @description Per-attempt retry details. */
+                    retries: components["schemas"]["TestRunCaseRetryDetail"][];
+                } | null;
+                /** @description Failing source line derived from retry details. */
+                failing_line: string | null;
+                /** @description ISO 8601 test completion time from the run ledger. */
+                created_at: string | null;
+                /** @description SHA of the last commit before the run started. */
+                last_commit_before_run_started_at: string | null;
+                /** @description Snoozes matching this case at read time. */
+                snooze_info: components["schemas"]["TestRunCaseSnoozeInfo"][];
+                /** @description Attempts that never ran because an earlier member of this case's Playwright serial group failed on the same attempt. Null when the case is not in a snapshotted group or when nothing was blocked. */
+                skipped_attempts: components["schemas"]["TestRunCaseSkippedAttempt"][] | null;
+            };
+        };
+        GetTestRunResponse: {
+            data: {
+                test_run: {
+                    project: {
+                        /** @description Project ID. */
+                        id: number;
+                        /** @description Project name. */
+                        name: string;
+                        /** @description Repository name for the project. */
+                        repo_name: string;
+                    };
+                    testRun: components["schemas"]["TestRunDetail"];
+                    /** @description Detailed results for each test case. */
+                    flattenedSummaryDetails: unknown[];
+                };
+            };
+        };
+        GetTestRunTriageSessionResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSession"] & unknown;
+            };
+        };
+        GetTestRunV2Response: {
+            /** @description Response payload. */
+            data: {
+                /** @description Test run database ID. */
+                id: number;
+                /** @description Owning project ID. */
+                project_id: number;
+                /** @description Current run state. */
+                state: string | null;
+                /** @description External run identifier, if one was assigned. */
+                run_id: number | null;
+                total_count: number | null;
+                unique_count: number | null;
+                success_count: number | null;
+                failed_count: number | null;
+                failed_count_after_snoozing: number | null;
+                skipped_count: number | null;
+                flaky_count: number | null;
+                duration: number | null;
+                created_at: string | null;
+                run_started_at: string | null;
+                run_ended_at: string | null;
+                test_run_branch: string;
+                test_run_head_sha: string | null;
+                summary_url: string | null;
+                /** @description Environment ID, if one was selected. */
+                environment_id: number | null;
+                /** @description Environment slug, if one was selected. */
+                environment_slug: string | null;
+                /** @description Environment name, if one was selected. */
+                environment_name: string | null;
+                /** @description Per-run environment variable overrides. */
+                environment_variables_overrides: {
+                    name: string;
+                    value: string;
+                }[] | null;
+                build_url: string | null;
+                build_branch: string | null;
+                commit: string | null;
+                repo: string | null;
+                error_code: string | null;
+                cancellation_reason: string | null;
+                cancelled_by_user_id: string | null;
+                superseded_by_test_run_id: number | null;
+            };
+        };
+        GhMainAppInstall: {
+            id: number;
+            org_id: number;
+            app_installation_id: string;
+            gh_organization: string | null;
+            gh_repos: {
+                id: number;
+                node_id: string;
+                name: string;
+                full_name: string;
+                private: boolean;
+            }[] | null;
+            created_at: string | null;
+            updated_at: string | null;
+        };
+        GhMainInstallListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Main App installation rows. */
+                gh_app_installs: components["schemas"]["GhMainAppInstall"][];
+            };
+        };
+        GhMainInstallResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The main App installation row, or null if the write matched nothing. */
+                installation: {
+                    id: number;
+                    org_id: number;
+                    app_installation_id: string;
+                    gh_organization: string | null;
+                    gh_repos: {
+                        id: number;
+                        node_id: string;
+                        name: string;
+                        full_name: string;
+                        private: boolean;
+                    }[] | null;
+                    created_at: string | null;
+                    updated_at: string | null;
+                } | null;
+            };
+        };
+        GhMainMetadataResponse: {
+            /** @description Response payload. */
+            data: {
+                ghAppMetadata: {
+                    /** @description GitHub App permissions. */
+                    permissions?: unknown;
+                    ghRepos: {
+                        id: number;
+                        node_id: string;
+                        name: string;
+                        full_name: string;
+                        private: boolean;
+                    }[];
+                    ghOrganization: string | null;
+                };
+            };
+        };
+        GhReporterAppInstall: {
+            id: number;
+            org_id: number | null;
+            app_installation_id: string | null;
+            gh_organization: string | null;
+            gh_repos: {
+                id: number;
+                node_id: string;
+                name: string;
+                full_name: string;
+                private: boolean;
+            }[] | null;
+            /** @enum {string|null} */
+            installation_status: "requested" | "installed" | null;
+            permissions: {
+                /** @enum {string} */
+                metadata: "read";
+                /** @enum {string} */
+                checks?: "write" | "read";
+                /** @enum {string} */
+                pull_requests?: "write" | "read";
+                /** @enum {string} */
+                contents?: "write" | "read";
+                /** @enum {string} */
+                issues?: "write" | "read";
+                /** @enum {string} */
+                merge_queues?: "write" | "read";
+                /** @enum {string} */
+                repository_custom_properties?: "write" | "read";
+            } & {
+                [key: string]: unknown;
+            };
+            created_at: string | null;
+            updated_at: string | null;
+        };
+        GhReporterCheckRunDelivery: {
+            id: number;
+            test_run_id: number;
+            environment_name: string | null;
+            repo_owner: string;
+            repo_name: string;
+            head_sha: string | null;
+            /** @description Null when GitHub never accepted the check run. */
+            check_run_id: number | null;
+            check_run_url: string | null;
+            status: string | null;
+            conclusion: string | null;
+            /** @description Error from the most recent delivery attempt; cleared on success. */
+            last_error: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        GhReporterDeliveriesResponse: {
+            /** @description Response payload. */
+            data: {
+                check_runs: components["schemas"]["GhReporterCheckRunDelivery"][];
+                pr_comments: components["schemas"]["GhReporterPrCommentDelivery"][];
+                linked_changes: components["schemas"]["GhReporterLinkedChangesDelivery"][];
+            };
+        };
+        GhReporterInstallListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Reporter App installation rows. */
+                gh_app_installs: components["schemas"]["GhReporterAppInstall"][];
+            };
+        };
+        GhReporterInstallResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The reporter App installation row, or null if the write matched nothing. */
+                installation: {
+                    id: number;
+                    org_id: number | null;
+                    app_installation_id: string | null;
+                    gh_organization: string | null;
+                    gh_repos: {
+                        id: number;
+                        node_id: string;
+                        name: string;
+                        full_name: string;
+                        private: boolean;
+                    }[] | null;
+                    /** @enum {string|null} */
+                    installation_status: "requested" | "installed" | null;
+                    permissions: {
+                        /** @enum {string} */
+                        metadata: "read";
+                        /** @enum {string} */
+                        checks?: "write" | "read";
+                        /** @enum {string} */
+                        pull_requests?: "write" | "read";
+                        /** @enum {string} */
+                        contents?: "write" | "read";
+                        /** @enum {string} */
+                        issues?: "write" | "read";
+                        /** @enum {string} */
+                        merge_queues?: "write" | "read";
+                        /** @enum {string} */
+                        repository_custom_properties?: "write" | "read";
+                    } & {
+                        [key: string]: unknown;
+                    };
+                    created_at: string | null;
+                    updated_at: string | null;
+                } | null;
+            };
+        };
+        GhReporterLinkedChangesDelivery: {
+            id: number;
+            /** @description The app PR's run the check links to (latest write). */
+            test_run_id: number;
+            repo_owner: string;
+            repo_name: string;
+            /** @description The app PR's head branch. */
+            pr_head: string;
+            pr_number: number | null;
+            /** @description App commit the check was last written on. */
+            head_sha: string;
+            test_branch: string;
+            /** @description Null when GitHub never accepted the check run. */
+            check_run_id: number | null;
+            check_run_url: string | null;
+            /** @description Linked changes state, e.g. no_test_branch, pr_open, nothing_to_merge. */
+            state: string | null;
+            status: string | null;
+            conclusion: string | null;
+            title: string | null;
+            /** @description Error from the most recent delivery attempt; cleared on success. */
+            last_error: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        GhReporterMetadataResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description GitHub installation metadata (permissions, repos, organization). */
+                ghAppMetadata?: unknown;
+            };
+        };
+        GhReporterPrCommentDelivery: {
+            id: number;
+            environment_name: string | null;
+            repo_owner: string;
+            repo_name: string;
+            pr_number: number;
+            comment_id: number;
+            comment_url: string | null;
+            last_test_run_id: number | null;
+            last_status: string | null;
+            last_error: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        GhReporterPullRequestResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Null when no PR contains head_sha. */
+                pull_request: {
+                    number: number;
+                    title: string;
+                    state: string;
+                    merged: boolean;
+                    head_ref: string;
+                    head_sha: string;
+                    html_url: string;
+                    updated_at: string;
+                } | null;
+                /** @description Whether head_sha is the PR's current head commit. */
+                delivered_sha_is_head: boolean | null;
+                /** @description Commits on the PR head after head_sha. Null when head_sha is not an ancestor of the head (e.g. after a force push) or not given. */
+                commits_since_delivered: number | null;
+            };
+        };
+        GhReporterWebhookAck: {
+            /** @description Response payload. */
+            data: {
+                /** @description Always true; the event was accepted for async processing. */
+                received: boolean;
+            };
+        };
+        GithubActionError: {
+            /** @description Null when present. */
+            data?: unknown;
+            /** @description Error message. */
+            error: string;
+        };
+        GithubAdminWebhookAck: {
+            /** @description Response payload. */
+            data: {
+                /** @description Always true; the event was accepted. */
+                received: boolean;
+            };
+        };
+        GithubBranchSearchResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Matching branch names, capped by `limit`. */
+                branches: string[];
+            };
+        };
+        GithubCommitDiffResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Unified diff for the commit. */
+                diff: string;
+                /** @description Resolved commit ref. */
+                commit: string;
+            };
+        };
+        GithubFileContentsResponse: {
+            /** @description Response payload. */
+            data: {
+                fileContents: {
+                    /** @description Decoded file contents. */
+                    content: string;
+                    /** @description Always true when present. */
+                    available: boolean;
+                    /** @description Blob SHA of the file. */
+                    sha: string;
+                };
+            };
+        };
+        GithubFileMutationResponse: {
+            /** @description Raw GitHub content mutation response. */
+            file?: unknown;
+        };
+        GithubLinkListResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["GithubUserLink"][];
+        };
+        GithubLinkUpsertResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The created or updated GitHub link. */
+                link: {
+                    /** @description Link ID. */
+                    id: number;
+                    /** @description Supabase user ID. */
+                    user_id: string;
+                    /** @description GitHub numeric user ID. */
+                    github_user_id: string;
+                    /** @description GitHub login/username. */
+                    github_username: string;
+                    /** @description GitHub display name. */
+                    github_display_name: string | null;
+                    /** @description GitHub avatar URL. */
+                    github_avatar_url: string | null;
+                    /** @description GitHub account email. */
+                    github_email: string | null;
+                    /** @description Whether the link is currently valid. */
+                    is_link_valid: boolean | null;
+                    /** @description ISO 8601 timestamp the link was last validated. */
+                    last_validated_at: string | null;
+                    /** @description ISO 8601 timestamp the link was created. */
+                    created_at: string;
+                    /** @description ISO 8601 timestamp the link was last updated. */
+                    updated_at: string;
+                } | null;
+            };
+        };
+        GithubPrCloseResponse: {
+            data: {
+                /** @description Whether the PR was closed. */
+                closed: boolean;
+                /** @description Human-readable status. */
+                message: string;
+            };
+            error: unknown;
+        };
+        GithubPrConvertToDraftResponse: {
+            data: {
+                /** @description Whether the PR is now a draft. */
+                draft: boolean;
+                /** @description Human-readable status. */
+                message: string;
+            };
+            error: unknown;
+        };
+        GithubPrMergeResponse: {
+            data: {
+                /** @description Whether the PR was merged. */
+                merged: boolean;
+                /** @description Human-readable status. */
+                message: string;
+            };
+            error: unknown;
+        };
+        GithubPrMergeabilityResponse: {
+            data: {
+                /**
+                 * @description Computed mergeability status.
+                 * @enum {string}
+                 */
+                status: "not_open" | "mergeable" | "not_mergeable" | "calculating";
+                /** @description GitHub's mergeable_state value. */
+                mergeable_state: string;
+                /** @description Whether the PR is a draft. */
+                draft: boolean;
+                /** @description Base branch of the PR. */
+                base: string;
+            };
+            error: unknown;
+        };
+        GithubPrReadyForReviewResponse: {
+            data: {
+                /** @description Whether the PR is now ready for review. */
+                ready: boolean;
+                /** @description Human-readable status. */
+                message: string;
+            };
+            error: unknown;
+        };
+        GithubPrReviewResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Repository owner. */
+                owner: string;
+                /** @description Repository name. */
+                repo: string;
+                number: number;
+                /** @enum {string} */
+                status: "open" | "closed" | "merged";
+                /** @description Whether the PR is a draft. */
+                draft: boolean;
+                url: string;
+                title: string;
+                description: string;
+                /** @description Unified pull request diff. */
+                diff: string;
+                /** @description False when the PR is over GitHub's diff limit: the diff is rebuilt from per-file patches, and files GitHub returns without a patch have headers but no hunks. Empty when even that failed. */
+                diff_complete: boolean;
+                /** @description Pull request head SHA. */
+                last_commit: string;
+                last_commit_at: string;
+                /** @description Base commit SHA. */
+                base_ref: string;
+                /** @description Head commit SHA. */
+                head_ref: string;
+                base_branch: string;
+                head_branch: string;
+                merged_at: string | null;
+            };
+        };
+        GithubPrReviewTargetResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Chat session that owns the pull request. */
+                chat_session_id: number;
+                /** @description Resolved pull request number. */
+                pr_number: number;
+            };
+        };
+        GithubProxyError: {
+            /** @description Error message. */
+            error: string;
+        };
+        GithubRateLimitReportEntry: {
+            /**
+             * @description Which GitHub app the installation belongs to.
+             * @enum {string}
+             */
+            app_type: "main" | "reporter";
+            /** @description GitHub app installation ID, or null when unknown. */
+            installation_id?: string | null;
+            /** @description GitHub organization for reporter installations. */
+            gh_organization?: string | null;
+            /** @description Per-resource rate limits keyed by resource name. */
+            rate?: {
+                [key: string]: components["schemas"]["GithubRateResource"];
+            };
+            /** @description Error message when this installation could not be queried. */
+            error?: string;
+        };
+        GithubRateLimitReportResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["GithubRateLimitReportEntry"][];
+        };
+        GithubRateResource: {
+            /** @description Maximum requests allowed in the window. */
+            limit?: number;
+            /** @description Requests already consumed in the window. */
+            used?: number;
+            /** @description Requests remaining in the window. */
+            remaining?: number;
+            /** @description Unix epoch (seconds) when the window resets. */
+            reset?: number;
+            /** @description ISO 8601 timestamp derived from `reset`. */
+            reset_iso_datetime?: string;
+            /** @description Minutes from now until `reset`, rounded. */
+            reset_mins_from_now?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        GithubTreeResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Raw GitHub git tree object. */
+                tree?: unknown;
+            };
+        };
+        GithubUserLink: {
+            /** @description Link ID. */
+            id: number;
+            /** @description Supabase user ID. */
+            user_id: string;
+            /** @description GitHub numeric user ID. */
+            github_user_id: string;
+            /** @description GitHub login/username. */
+            github_username: string;
+            /** @description GitHub display name. */
+            github_display_name: string | null;
+            /** @description GitHub avatar URL. */
+            github_avatar_url: string | null;
+            /** @description GitHub account email. */
+            github_email: string | null;
+            /** @description Whether the link is currently valid. */
+            is_link_valid: boolean | null;
+            /** @description ISO 8601 timestamp the link was last validated. */
+            last_validated_at: string | null;
+            /** @description ISO 8601 timestamp the link was created. */
+            created_at: string;
+            /** @description ISO 8601 timestamp the link was last updated. */
+            updated_at: string;
+        };
+        GithubWebhookAck: {
+            /** @description Response payload. */
+            data: {
+                /** @description Always true; the event was accepted for async processing. */
+                received: boolean;
+            };
+        };
+        GsheetMetadataResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Title of the spreadsheet. */
+                title: string;
+                /**
+                 * @description Access the service account has on the spreadsheet: none, read, or read_write.
+                 * @enum {string}
+                 */
+                access_level: "none" | "read" | "read_write";
+            };
+        };
+        GsheetPlainError: {
+            /** @description Human-readable error message. */
+            error: string;
+        };
+        GsheetProxyBadRequest: components["schemas"]["ErrorResponse"] | components["schemas"]["GsheetPlainError"];
+        GsheetProxyResponse: {
+            /** @description Response payload. */
+            data?: unknown;
+        };
+        HiveAgentSummary: {
+            /** @description Agent name; pass as `agent` (optionally `<name>@<version>`) when creating a chat session. */
+            name: string;
+            /** @description What the agent is for, from its `@latest` version. */
+            description: string | null;
+            /** @description Version that `<name>` (and `<name>@latest`) resolves to. */
+            latest_version: number;
+            /**
+             * @description Where the `@latest` version runs: `sandbox` (VM with a repo and shell) or `worker` (no filesystem).
+             * @enum {string}
+             */
+            runtime: "sandbox" | "worker";
+            /** @description Model the `@latest` version pins, before any override. */
+            model: string;
+        };
+        HiveAgentsResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["HiveAgentSummary"][];
+        };
+        HiveModel: {
+            /** @description Canonical id, e.g. "anthropic/claude-sonnet-4-5-20250929". */
+            id: string;
+            /** @description Human-friendly label, e.g. "Claude Sonnet 4.5 (Vertex)". */
+            label: string;
+            /** @description Provider portion of the id, e.g. "anthropic" or "vertex-anthropic". */
+            provider: string;
+            /** @description Context window in tokens, from the provider catalog. Optional so clients keep working against Hive deployments that predate the field. */
+            context_window?: number;
+        };
+        HiveModelsResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["HiveModel"][];
+        };
+        ImportLoomFileRequest: {
+            /** @description Loom share URL (loom.com/share/<id>). */
+            url: string;
+        };
+        ImportLoomFileResponse: {
+            /** @description Response payload. */
+            data: {
+                file: components["schemas"]["File"];
+            };
+        };
+        IngestTestCaseRunEndEventResponse: {
+            /** @description Empty acknowledgement payload. */
+            data?: Record<string, never>;
+            /** @description Present only when the event was rejected without a retry (e.g. missing `runId`). */
+            error?: {
+                /** @description Reason the event was rejected. */
+                message: string;
+            };
+        };
+        InvoiceBillingLine: {
+            /** @description Billing line ID. */
+            id: number;
+            /** @description Parent invoice ID. */
+            invoice_id: number;
+            /** @description Project this charge belongs to, if any. */
+            project_id: number | null;
+            /** @description Usage month this charge covers (YYYY-MM-DD). */
+            period_month: string | null;
+            /** @description Contract-to-billing FX rate (null if same currency). */
+            fx_rate: number | null;
+            /** @description Billing line kind (`tier` or `addon`). */
+            kind: string;
+            /** @description Plan this charge was billed from, if any. */
+            plan_id: number | null;
+            /** @description Tier name, if applicable. */
+            tier: string | null;
+            /** @description Display label. */
+            label: string | null;
+            /** @description Base price in cents. */
+            base_price_cents: number;
+            /** @description Currency of this line. */
+            currency: string;
+            /** @description Display order within the invoice. */
+            sort_order: number;
+            /** @description Metered usage rows for this billing line. */
+            meters: components["schemas"]["InvoiceBillingLineMeter"][];
+        };
+        InvoiceBillingLineMeter: {
+            /** @description Meter row ID. */
+            id: number;
+            /** @description Parent billing line ID. */
+            invoice_billing_line_id: number;
+            /** @description Meter name. */
+            meter: string;
+            /** @description Quantity included before overage. */
+            included_qty: number | null;
+            /** @description Billed overage quantity (may be fractional). */
+            billed_overage_qty: number | null;
+            /** @description Per-unit overage price in cents. */
+            overage_price_cents: number | null;
+            /** @description Display order within the billing line. */
+            sort_order: number;
+        };
+        InvoiceBillingLinesResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The invoice's billing lines. */
+                billing_lines: components["schemas"]["InvoiceBillingLine"][];
+            };
+        };
+        InvoiceCreditRef: {
+            /** @description fin ledger row id — the pointer + proof. */
+            fin_ledger_id: string;
+            /** @description Date of the bank credit (YYYY-MM-DD). */
+            date: string;
+            /** @description UTR / instrument number from the statement. */
+            reference: string | null;
+            /** @description Currency of the credit (e.g. INR). */
+            currency: string;
+            /** @description Full credit amount in `currency` minor units. */
+            amount_minor: number;
+            /** @description Portion allocated to this invoice, minor units. */
+            allocated_minor: number;
+            /** @description Settlement rail, if known. */
+            rail: string | null;
+            /** @description Remitter name, if known. */
+            remitter: string | null;
+            /** @description When fin made this allocation (ISO). */
+            matched_at?: string;
+        };
+        InvoiceGenerateError: {
+            /** @description Error message. */
+            error: string;
+            /** @description Upstream response body, if any. */
+            details: string;
+        };
+        InvoiceLineItem: {
+            /** @description Line item name. */
+            item_name: string;
+            /** @description Sub-item name shown under the line item. */
+            sub_item_name: string;
+            /** @description SAC/HSN tax code. */
+            sac_hsn: string;
+            /** @description Quantity billed. */
+            quantity: number;
+            /** @description Unit price (in cents/paisa). */
+            unit_price: number;
+        };
+        InvoiceListResponse: {
+            /** @description The page of invoices. */
+            data: {
+                /** @description The page of invoices. */
+                invoices: components["schemas"]["InvoiceWithOrg"][];
+            };
+            pagination: components["schemas"]["Pagination"];
+        };
+        InvoicePaymentStatusResponse: {
+            /** @description Response payload. */
+            data: {
+                invoice: components["schemas"]["InvoiceWithOrg"];
+            };
+        };
+        InvoicePdfDownloadUrlResponse: {
+            /** @description Absolute URL to download the invoice PDF. */
+            download_url: string;
         };
         InvoiceRazorpayOrderResponse: {
             /** @description Response payload. */
@@ -5444,30 +9858,21 @@ export interface components {
                 org_name: string | null;
             };
         };
-        VerifyInvoiceRazorpayPaymentResponse: {
+        InvoiceResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Invoice paid status after settling. */
-                paid_status: string;
-                /** @description Total settled amount in paise after this payment. */
-                paid_minor: number;
+                invoice: components["schemas"]["InvoiceWithOrg"];
             };
         };
-        VerifyInvoiceRazorpayPaymentRequest: {
-            /** @description Order id returned by razorpay-order. */
-            razorpay_order_id: string;
-            /** @description Payment id from the checkout success handler. */
-            razorpay_payment_id: string;
-            /** @description Checkout signature: hex HMAC-SHA256 of `order_id|payment_id`. */
-            razorpay_signature: string;
+        InvoiceSimpleError: {
+            /** @description Human-readable error message. */
+            error: string;
         };
-        InvoiceListResponse: {
-            /** @description The page of invoices. */
-            data: {
-                /** @description The page of invoices. */
-                invoices: components["schemas"]["InvoiceWithOrg"][];
-            };
-            pagination: components["schemas"]["Pagination"];
+        InvoiceTaxDetail: {
+            /** @description Tax name. */
+            tax_name: string;
+            /** @description Tax rate as a percentage applied to the amount. */
+            tax_percentage: number;
         };
         InvoiceWithOrg: {
             /** @description Invoice ID. */
@@ -5542,152 +9947,910 @@ export interface components {
                 payment_terms_days: number | null;
             } | null;
         };
-        InvoiceCreditRef: {
-            /** @description fin ledger row id — the pointer + proof. */
-            fin_ledger_id: string;
-            /** @description Date of the bank credit (YYYY-MM-DD). */
-            date: string;
-            /** @description UTR / instrument number from the statement. */
-            reference: string | null;
-            /** @description Currency of the credit (e.g. INR). */
-            currency: string;
-            /** @description Full credit amount in `currency` minor units. */
-            amount_minor: number;
-            /** @description Portion allocated to this invoice, minor units. */
-            allocated_minor: number;
-            /** @description Settlement rail, if known. */
-            rail: string | null;
-            /** @description Remitter name, if known. */
-            remitter: string | null;
-            /** @description When fin made this allocation (ISO). */
-            matched_at?: string;
-        };
-        InvoiceLineItem: {
-            /** @description Line item name. */
-            item_name: string;
-            /** @description Sub-item name shown under the line item. */
-            sub_item_name: string;
-            /** @description SAC/HSN tax code. */
-            sac_hsn: string;
-            /** @description Quantity billed. */
-            quantity: number;
-            /** @description Unit price (in cents/paisa). */
-            unit_price: number;
-        };
-        InvoiceTaxDetail: {
-            /** @description Tax name. */
-            tax_name: string;
-            /** @description Tax rate as a percentage applied to the amount. */
-            tax_percentage: number;
-        };
-        InvoiceResponse: {
-            /** @description Response payload. */
-            data: {
-                invoice: components["schemas"]["InvoiceWithOrg"];
-            };
-        };
-        InvoiceSimpleError: {
-            /** @description Human-readable error message. */
-            error: string;
-        };
-        InvoicePaymentStatusResponse: {
-            /** @description Response payload. */
-            data: {
-                invoice: components["schemas"]["InvoiceWithOrg"];
-            };
-        };
-        InvoiceBillingLinesResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The invoice's billing lines. */
-                billing_lines: components["schemas"]["InvoiceBillingLine"][];
-            };
-        };
-        InvoiceBillingLine: {
-            /** @description Billing line ID. */
+        JiraAppInstall: {
+            /** @description Installation ID. */
             id: number;
-            /** @description Parent invoice ID. */
-            invoice_id: number;
-            /** @description Project this charge belongs to, if any. */
-            project_id: number | null;
-            /** @description Usage month this charge covers (YYYY-MM-DD). */
-            period_month: string | null;
-            /** @description Contract-to-billing FX rate (null if same currency). */
-            fx_rate: number | null;
-            /** @description Billing line kind (`tier` or `addon`). */
+            /** @description Organisation ID. */
+            org_id: number;
+            /** @description Atlassian cloud ID. */
+            jira_cloud_id: string;
+            /** @description Jira site base URL. */
+            jira_site_url: string;
+            /** @description Map of Jira project key to Empirical project ID. */
+            project_mappings: {
+                [key: string]: number;
+            } | null;
+            /** @description Access token expiry (ISO 8601). */
+            jira_access_token_expires_at: string;
+            /** @description Webhook expiry (ISO 8601), or null. */
+            webhook_expires_at: string | null;
+            /** @description When Jira OAuth reauthorization became required (ISO 8601), or null. */
+            reauthorization_required_at: string | null;
+            /** @description Machine-readable reason reauthorization is required. */
+            reauthorization_reason: string | null;
+            /** @description Creation timestamp (ISO 8601), or null. */
+            created_at: string | null;
+            /** @description Alias of `jira_access_token_expires_at` (ISO 8601). */
+            expires_at: string;
+            /** @description Whether the access token has not yet expired. */
+            is_active: boolean;
+        };
+        JiraInstallationListResponse: {
+            /** @description Jira app installations for the organisation. */
+            data: components["schemas"]["JiraAppInstall"][];
+            /** @description Number of installations. */
+            count: number;
+        };
+        JiraInstallationRecordResponse: {
+            /**
+             * @description Always true on success.
+             * @enum {boolean}
+             */
+            success: true;
+            /** @description The updated installation row, or null if not found. */
+            data: {
+                /** @description Installation ID. */
+                id: number;
+                /** @description Organisation ID. */
+                org_id: number;
+                /** @description Atlassian cloud ID. */
+                jira_cloud_id: string;
+                /** @description Jira site base URL. */
+                jira_site_url: string;
+                /** @description OAuth access token. */
+                jira_access_token: string;
+                /** @description OAuth refresh token. */
+                jira_refresh_token: string;
+                /** @description Access token expiry (ISO 8601). */
+                jira_access_token_expires_at: string;
+                /** @description Map of Jira project key to Empirical project ID. */
+                project_mappings: {
+                    [key: string]: number;
+                } | null;
+                /** @description Webhook expiry (ISO 8601), or null. */
+                webhook_expires_at: string | null;
+                /** @description When Jira OAuth reauthorization became required (ISO 8601), or null. */
+                reauthorization_required_at: string | null;
+                /** @description Machine-readable reason reauthorization is required. */
+                reauthorization_reason: string | null;
+                /** @description Creation timestamp (ISO 8601), or null. */
+                created_at: string | null;
+            } | null;
+        };
+        JiraInstallationResponse: {
+            /**
+             * @description Always true on success.
+             * @enum {boolean}
+             */
+            success: true;
+            data: components["schemas"]["JiraAppInstall"];
+        };
+        JiraSuccessResponse: {
+            /**
+             * @description Always true on success.
+             * @enum {boolean}
+             */
+            success: true;
+        };
+        JiraValidationResponse: {
+            /**
+             * @description Always true on success.
+             * @enum {boolean}
+             */
+            success: true;
+            /**
+             * @description Current state of the registered webhook.
+             * @enum {string}
+             */
+            webhookStatus: "active" | "expired" | "missing";
+            /** @description Webhook expiry (ISO 8601), or null. */
+            webhookExpiresAt: string | null;
+        };
+        JiraWebhookResponse: {
+            /** @description Whether ingestion succeeded. */
+            success?: boolean;
+            /** @description True when the issue lacks the `empirical` trigger label. */
+            skipped?: boolean;
+            /** @description ID of the created/existing request. */
+            requestId?: number;
+            /** @description ID of the created chat session. */
+            sessionId?: number;
+            /** @description Ingestion step reached, when reported. */
+            step?: string;
+            /** @description Error detail when ingestion fails. */
+            error?: unknown;
+        };
+        LastPassPerEnvEntry: {
+            /** @description Environment ID the test last passed in. */
+            environment_id: string;
+            /** @description ID of the test run in which it last passed. */
+            test_run_id: string;
+            /** @description Epoch timestamp (ms) of the last passing run. */
+            executed_at: number;
+        };
+        LastPassPerEnvRequest: {
+            /** @description Test case ID to look up. */
+            test_case_id: string;
+            /** @description Project ID (ignored; the project comes from auth scope). */
+            project_id?: number;
+            /** @description Look-back window in days (default 30). */
+            days?: number;
+            /** @description Anchor the lookup to this point in time (ISO 8601); returns the last pass as of then. */
+            before?: string;
+        };
+        LastPassPerEnvResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["LastPassPerEnvEntry"][];
+        };
+        LinearAppInstall: {
+            /** @description Installation ID. */
+            id: number;
+            /** @description Organization ID. */
+            org_id: number;
+            /** @description Linear app user (actor) id. */
+            linear_app_user_id: string;
+            /** @description Linear organization id. */
+            linear_organization_id: string;
+            /** @description Map of Linear team key to Empirical project id. */
+            project_mappings: {
+                [key: string]: number;
+            };
+            /** @description ISO 8601 timestamp the installation was created. */
+            created_at: string | null;
+            /** @description ISO 8601 expiry of the stored access token. */
+            expires_at: string;
+            /** @description Whether the access token is still valid or can be refreshed. */
+            is_active: boolean;
+            /** @description Actor name (only when metadata is cached). */
+            linear_app_user_name?: string;
+            /** @description Organization name (only when metadata is cached). */
+            linear_organization_name?: string;
+            /** @description Organization URL key (only when metadata is cached). */
+            linear_organization_url_key?: string;
+            /** @description Linear teams (only when metadata is cached). */
+            teams?: components["schemas"]["LinearTeamRef"][];
+        };
+        LinearInstallCreateResponse: {
+            /** @description Always true when the installation was stored. */
+            success: boolean;
+            /** @description The created or reauthorized installation. */
+            data: {
+                /** @description Installation ID. */
+                id: number;
+                /** @description Organization ID. */
+                org_id: number;
+                /** @description Linear app user (actor) id. */
+                linear_app_user_id: string;
+                /** @description Linear organization id. */
+                linear_organization_id: string;
+                /** @description Map of Linear team key to Empirical project id. */
+                project_mappings: {
+                    [key: string]: number;
+                };
+                /** @description ISO 8601 timestamp the installation was created. */
+                created_at: string | null;
+                /** @description ISO 8601 expiry of the stored access token. */
+                expires_at: string;
+                /** @description Whether the access token is still valid or can be refreshed. */
+                is_active: boolean;
+                /** @description Actor name (only when metadata is cached). */
+                linear_app_user_name?: string;
+                /** @description Organization name (only when metadata is cached). */
+                linear_organization_name?: string;
+                /** @description Organization URL key (only when metadata is cached). */
+                linear_organization_url_key?: string;
+                /** @description Linear teams (only when metadata is cached). */
+                teams?: components["schemas"]["LinearTeamRef"][];
+            };
+        };
+        LinearInstallListResponse: {
+            /** @description Installations for the organization. */
+            data: components["schemas"]["LinearAppInstall"][];
+            /** @description Number of installations. */
+            count: number;
+        };
+        LinearProjectMappingsResponse: {
+            /** @description Always true when the mappings were updated. */
+            success: boolean;
+            /** @description The updated installation, or null if it disappeared. */
+            data: {
+                /** @description Installation ID. */
+                id: number;
+                /** @description Organization ID. */
+                org_id: number;
+                /** @description Linear app user (actor) id. */
+                linear_app_user_id: string;
+                /** @description Linear organization id. */
+                linear_organization_id: string;
+                /** @description Map of Linear team key to Empirical project id. */
+                project_mappings: {
+                    [key: string]: number;
+                };
+                /** @description ISO 8601 timestamp the installation was created. */
+                created_at: string | null;
+                /** @description ISO 8601 expiry of the stored access token. */
+                expires_at: string;
+                /** @description Whether the access token is still valid or can be refreshed. */
+                is_active: boolean;
+                /** @description Actor name (only when metadata is cached). */
+                linear_app_user_name?: string;
+                /** @description Organization name (only when metadata is cached). */
+                linear_organization_name?: string;
+                /** @description Organization URL key (only when metadata is cached). */
+                linear_organization_url_key?: string;
+                /** @description Linear teams (only when metadata is cached). */
+                teams?: components["schemas"]["LinearTeamRef"][];
+            } | null;
+        };
+        LinearSuccessResponse: {
+            /** @description Always true when the operation succeeded. */
+            success: boolean;
+        };
+        LinearTeamRef: {
+            /** @description Linear team id. */
+            id: string;
+            /** @description Linear team key (e.g. "EMP"). */
+            key: string;
+            /** @description Linear team name. */
+            name: string;
+        };
+        LinearValidateResponse: {
+            /** @description Validation result. */
+            data: {
+                /** @description Always true when the token is valid. */
+                success: boolean;
+                /** @description Whether cached metadata was backfilled. */
+                backfilled: boolean;
+            };
+        };
+        LinearWebhookResponse: {
+            /** @description Whether the webhook was accepted. */
+            success: boolean;
+        };
+        ListArtifactsResponse: {
+            data: {
+                artifacts: components["schemas"]["Artifact"][];
+            };
+        };
+        ListEnvironmentsResponse: {
+            /** @description Response payload. */
+            data: {
+                environments: components["schemas"]["Environment"][];
+            };
+        };
+        ListFilesResponse: {
+            /** @description The page of files, newest first. */
+            data: {
+                files: components["schemas"]["File"][];
+            };
+            pagination: components["schemas"]["Pagination"];
+        };
+        ListProjectAddonsResponse: {
+            /** @description Response payload. */
+            data: {
+                addons: components["schemas"]["ProjectAddonState"][];
+                /** @description Every period for this project, newest first. */
+                history: components["schemas"]["ProjectAddonPeriod"][];
+            };
+        };
+        ListReportersResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Every reporter a reporter config can name (Slack run status, GitHub check, GitHub PR comment, email report and, for runs, the Slack DM), with whether it can post for this project. */
+                reporters: components["schemas"]["AvailableReporter"][];
+            };
+        };
+        ListTestRunCasesResponse: {
+            /** @description The page of test run cases. */
+            data: components["schemas"]["TestRunCase"][];
+            pagination: components["schemas"]["Pagination"];
+        };
+        ListTestRunChatSessionsResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_sessions: components["schemas"]["TestRunChatSession"][];
+            };
+        };
+        LiveTestRun: {
+            /** @description Test run database ID. */
+            id: number;
+            /** @description External run_id, if assigned. */
+            run_id: number | null;
+            /** @description ECS task ID running the run, if dispatched. */
+            ecs_task_id: string | null;
+            /** @description AWS region of the ECS task, if dispatched. */
+            ecs_task_region: string | null;
+            /** @description Total number of test cases. */
+            total_count: number | null;
+            /** @description Number of unique test cases. */
+            unique_count: number | null;
+            /** @description Number of passed tests. */
+            success_count: number | null;
+            /** @description Number of failed tests. */
+            failed_count: number | null;
+            /** @description Failed tests remaining after applying snoozes. */
+            failed_count_after_snoozing: number | null;
+            /** @description Number of skipped tests. */
+            skipped_count: number | null;
+            /** @description Number of flaky tests. */
+            flaky_count: number | null;
+            /** @description ISO 8601 timestamp when tests started. */
+            run_started_at: string | null;
+            /** @description ISO 8601 timestamp when tests ended. */
+            run_ended_at: string | null;
+            /** @description Run duration in milliseconds. */
+            duration: number | null;
+            /** @description URL of the Playwright JSON report. */
+            summary_url: string | null;
+            /** @description Current run state (queued, started, ended, ...). */
+            state: string | null;
+            /** @description Head commit SHA of the test repo. */
+            test_run_head_sha: string | null;
+            /** @description Head branch of the merge commit, if any. */
+            merge_commit_head_branch: string | null;
+            /** @description Base branch of the merge commit, if any. */
+            merge_commit_base_branch: string | null;
+            /** @description Whether the merge commit succeeded. */
+            merge_commit_successful: boolean | null;
+            /** @description Error code if the run failed. */
+            error_code: string | null;
+            /** @description Reason the run was cancelled, if any. */
+            cancellation_reason: string | null;
+            /** @description User ID that cancelled the run, if any. */
+            cancelled_by_user_id: string | null;
+            /** @description Artifact storage bucket for the run. */
+            storage_bucket: string | null;
+            /** @description ID of the run that supersedes this one, if any. */
+            superseded_by_test_run_id: number | null;
+        };
+        MarkAnnouncementsSeenRequest: {
+            /**
+             * Format: date-time
+             * @description Mark announcements up to this time as seen. Defaults to now; never moves the seen time backwards or past now.
+             */
+            seen_at?: string;
+        };
+        MemberByTestRun: {
+            /** @description Test case ID (normalized 41-character Playwright test id). */
+            test_case_id: string;
+            group_id: string;
+            label: string | null;
+            /** @enum {string|null} */
+            type: "app" | "test" | null;
+            /** @enum {string|null} */
+            status: "open" | "resolved" | null;
+            diagnosis: string | null;
+            recommendation: string | null;
+            /** @enum {string|null} */
+            match_source: "machine" | "agent" | "human" | "system" | null;
+            match_score: number | null;
+            chat_session_id: number | null;
+            matched_at: string | null;
+            detached_at: string | null;
+        };
+        MembersByTestRunResponse: {
+            /** @description Response payload. */
+            data: {
+                members: components["schemas"]["MemberByTestRun"][];
+            };
+        };
+        MembershipListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Memberships created from pending invites. */
+                memberships: {
+                    /** @description Organization joined. */
+                    org_id: number;
+                }[];
+            };
+        };
+        Memory: {
+            id: number;
+            project_id: number;
+            format_version: number;
+            name: string | null;
+            description: string | null;
+            content: string;
+            source: string | null;
+            source_path: string | null;
+            /** @description ID of the chat session the memory was created in, or null if not written from a sandbox session. */
+            source_chat_session_id: number | null;
+            created_by: string | null;
+            updated_by: string | null;
+            /** @description ISO 8601 timestamp. */
+            created_at: string;
+            /** @description ISO 8601 timestamp. */
+            updated_at: string;
+            /** @description ISO 8601 timestamp when the memory was soft-deleted, or null if live. */
+            deleted_at: string | null;
+            /** @description User who deleted the memory, or null. */
+            deleted_by: string | null;
+            /** @description Chat session that deleted the memory, or null if not deleted from a sandbox session. */
+            deleted_by_chat_session_id: number | null;
+            /** @description Reason given for the delete, or null. */
+            delete_reason: string | null;
+        };
+        MemoryActivity: {
+            id: number;
+            project_id: number;
+            name: string | null;
+            description: string | null;
+            source: string | null;
+            /** @description Chat session the memory was created in, if any. */
+            source_chat_session_id: number | null;
+            /** @description Length of the current content in characters. */
+            content_length: number;
+            /** @description ISO 8601 timestamp. */
+            created_at: string;
+            /** @description ISO 8601 timestamp. */
+            updated_at: string;
+            /** @description ISO 8601 timestamp of the soft delete, or null if live. */
+            deleted_at: string | null;
+            /** @description Total versions, including the initial create (v1). */
+            version_count: number;
+            /** @description Edits (versions after v1) in the last 7 days. */
+            edits_7d: number;
+            /** @description Edits (versions after v1) in the last 30 days. */
+            edits_30d: number;
+            /** @description Distinct chat sessions that edited the memory after v1. */
+            edit_session_count: number;
+            /** @description ISO 8601 timestamp of the latest edit, or null if never edited. */
+            last_edited_at: string | null;
+        };
+        MemoryActivityDay: {
+            /** @description UTC day, YYYY-MM-DD. */
+            date: string;
+            project_id: number;
+            created: number;
+            edited: number;
+            deleted: number;
+        };
+        MemoryActivityResponse: {
+            /** @description Response payload. */
+            data: {
+                memories: components["schemas"]["MemoryActivity"][];
+                daily: components["schemas"]["MemoryActivityDay"][];
+            };
+        };
+        MemoryChange: {
+            /** @enum {string} */
+            kind: "create" | "update" | "delete";
+            memory_id: number;
+            name: string | null;
+            description: string | null;
+            content: string;
+            reason: string | null;
+            /** @description ISO 8601 timestamp of the change. */
+            at: string;
+            /** @description Version written by the change; null for a delete. For a delete, name/description/content are the memory's last content. */
+            version: number | null;
+            /** @description The version immediately before an update; null for creates and deletes. */
+            previous: {
+                version: number;
+                name: string | null;
+                description: string | null;
+                content: string;
+            } | null;
+        };
+        MemoryChangeSummary: {
+            created: number;
+            updated: number;
+            deleted: number;
+            /** @description Live memories in the project just before the first change; null when there are no changes. */
+            live_before: number | null;
+            /** @description Live memories in the project right after the last change; null when there are no changes. */
+            live_after: number | null;
+        };
+        MemoryChangesResponse: {
+            /** @description Response payload. */
+            data: {
+                changes: components["schemas"]["MemoryChange"][];
+                summary: components["schemas"]["MemoryChangeSummary"];
+            };
+        };
+        MemoryClassification: {
+            memory_id: number;
+            /** @description Memory version number the labels apply to (v1 = create). */
+            version: number;
+            vocabulary_version: number;
+            project_id: number;
+            /** @description JEV model that answered, e.g. "jev-1.13.0". */
+            model: string;
+            retention: string;
+            retention_confidence: number;
+            subject: string;
+            subject_confidence: number;
+            role: string;
+            role_confidence: number;
+            /** @description Per-option probabilities for each axis. */
+            probabilities: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** @description ISO 8601 timestamp. */
+            classified_at: string;
+        };
+        MemoryClassificationsResponse: {
+            /** @description Response payload. */
+            data: {
+                vocabulary_version: number;
+                classifications: components["schemas"]["MemoryClassification"][];
+            };
+        };
+        MemoryDeleteResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Always true on success. */
+                success: boolean;
+            };
+        };
+        MemoryEditUsage: {
+            memory_id: number;
+            name: string | null;
+            deleted: boolean;
+            /** @description Versions saved after the initial create. */
+            edits: number;
+            /** @description Distinct chat sessions that made those edits. */
+            sessions: number;
+        };
+        MemoryListResponse: {
+            data: {
+                memories: components["schemas"]["Memory"][];
+            };
+            pagination: components["schemas"]["Pagination"];
+        };
+        MemoryReadUsage: {
+            /** @description Live memory the name resolves to now, or null if it was renamed or deleted since. */
+            memory_id: number | null;
+            name: string;
+            /** @description read_memory calls. */
+            reads: number;
+            /** @description Distinct sessions that read it. */
+            sessions: number;
+            /** @description UTC day, YYYY-MM-DD. */
+            last_read: string;
+        };
+        MemoryResponse: {
+            /** @description Response payload. */
+            data: {
+                memory: components["schemas"]["Memory"];
+            };
+        };
+        MemoryUsageResponse: {
+            /** @description Response payload. */
+            data: {
+                days: number;
+                /** @description Most read memories (read_memory calls counted by Hive from agent sessions), or null when Hive is unavailable. */
+                most_read: components["schemas"]["MemoryReadUsage"][] | null;
+                most_edited: components["schemas"]["MemoryEditUsage"][];
+            };
+        };
+        MemoryVersion: {
+            id: number;
+            memory_id: number;
+            version: number;
+            format_version: number;
+            name: string | null;
+            description: string | null;
+            content: string;
+            /** @description ID of the chat session that produced this version, or null if not written from a sandbox session. */
+            source_chat_session_id: number | null;
+            created_by: string | null;
+            /** @description Reason given for the write that produced this version. */
+            reason: string | null;
+            /** @description ISO 8601 timestamp. */
+            created_at: string;
+        };
+        MemoryVersionListResponse: {
+            /** @description Response payload. */
+            data: {
+                versions: components["schemas"]["MemoryVersion"][];
+            };
+        };
+        MemoryWriteRejectedResponse: {
+            data: unknown;
+            error: {
+                /** @description Why the write was refused. */
+                message: string;
+                gate: components["schemas"]["MemoryWriteVerdict"];
+            };
+        };
+        MemoryWriteResponse: {
+            /** @description Response payload. */
+            data: {
+                memory: components["schemas"]["Memory"];
+                /** @description Memory write gate verdict for agent writes; null when the write was not classified. */
+                gate: {
+                    /**
+                     * @description `rejected` = classified as failure/incident state; `error` = classification failed and the write was not checked.
+                     * @enum {string}
+                     */
+                    decision: "accepted" | "rejected" | "error";
+                    /**
+                     * @description `shadow` saves regardless of the decision; `enforce` refuses rejected writes.
+                     * @enum {string}
+                     */
+                    mode: "shadow" | "enforce";
+                    /** @description True when the write was refused. */
+                    blocked: boolean;
+                    reason: string;
+                    model: string | null;
+                    vocabulary_version: number | null;
+                    retention: string | null;
+                    retention_confidence: number | null;
+                    /** @description Probability of the failure/incident retention class; the write is rejected at or above the gate's threshold. */
+                    failure_incident_probability: number | null;
+                    subject: string | null;
+                    role: string | null;
+                } | null;
+            };
+        };
+        MemoryWriteVerdict: {
+            /**
+             * @description `rejected` = classified as failure/incident state; `error` = classification failed and the write was not checked.
+             * @enum {string}
+             */
+            decision: "accepted" | "rejected" | "error";
+            /**
+             * @description `shadow` saves regardless of the decision; `enforce` refuses rejected writes.
+             * @enum {string}
+             */
+            mode: "shadow" | "enforce";
+            /** @description True when the write was refused. */
+            blocked: boolean;
+            reason: string;
+            model: string | null;
+            vocabulary_version: number | null;
+            retention: string | null;
+            retention_confidence: number | null;
+            /** @description Probability of the failure/incident retention class; the write is rejected at or above the gate's threshold. */
+            failure_incident_probability: number | null;
+            subject: string | null;
+            role: string | null;
+        };
+        MergeBranchesResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether the merge happened. */
+                merged?: boolean;
+                /** @description Human-readable result. */
+                message: string;
+                /** @description URL of the PR, when one was created. */
+                pull_request_url?: string;
+            };
+        };
+        MergeFailureGroupRequest: {
+            /** @description Target group id; this group merges into it. */
+            into_group_id: string;
+        };
+        MergeRequest: {
+            /** @description Merge request ID. */
+            id: number;
+            /** @description Owning project ID. */
+            project_id: number;
+            /** @description Branch merged into. */
+            base_branch: string;
+            /** @description Branch merged from. */
+            branch_to_merge: string;
+            /**
+             * @description Merge request status.
+             * @enum {string}
+             */
+            status: "requested" | "merged" | "deleted_with_no_changes" | "created_pr_but_merged_failed" | "error";
+            /** @description GitHub pull request number, if created. */
+            pr_number: number | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 last-update timestamp. */
+            updated_at: string;
+        };
+        MergeRequestsResponse: {
+            /** @description The page of merge requests. */
+            data: components["schemas"]["MergeRequest"][];
+            pagination: components["schemas"]["Pagination"];
+        };
+        MetricsImpactedTestSummary: {
+            /** @description Name of the impacted Playwright test. */
+            testName: string;
+            /** @description File path of the impacted test. */
+            filePath: string;
+            /** @description ID of the chat session whose merged PR changed this test. */
+            sessionId: number;
+            /** @description ISO 8601 timestamp the session was last updated. */
+            updatedAt: string;
+        };
+        Notification: {
+            id: number;
+            /** @enum {string} */
+            kind: "chat_session_waiting" | "test_run";
+            project_id: number;
+            project_slug: string;
+            /** @enum {string} */
+            entity_type: "chat_session" | "test_run";
+            entity_id: number;
+            payload: {
+                [key: string]: unknown;
+            };
+            created_at: string;
+            read_at: string | null;
+            resolved_at: string | null;
+        };
+        NotificationListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Unread notifications (newest 100) followed by the most recent read ones. */
+                notifications: components["schemas"]["Notification"][];
+                /** @description Total unread notifications. */
+                unread_count: number;
+            };
+        };
+        NotificationReadResponse: {
+            /** @description Response payload. */
+            data: {
+                id: number;
+                read_at: string;
+            };
+        };
+        NotificationsReadAllResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Notifications newly marked read. */
+                updated: number;
+            };
+        };
+        OnboardingChecklistResponse: {
+            /** @description Response payload. */
+            data: {
+                email: string;
+                email_domain: string;
+                /** @description Whether a new org may claim the caller's email domain for auto-join. */
+                domain_join_available: boolean;
+                invites: {
+                    id: number;
+                    org_id: number;
+                    org_name: string;
+                }[];
+                /** @description Trial credit the org they create will get: an offer for the caller's email or email domain, else the offer for work email domains that haven't had a trial. `null` once they belong to an org or when no offer applies. */
+                credit_offer: {
+                    /** @description Trial credit, in US cents. */
+                    amount_cents: number;
+                    /** @description Days the credit lasts, counted from org creation. */
+                    duration_days: number;
+                } | null;
+                /** @description Why the org they create gets no trial credit while there is a work email domains offer: `public_email` (a work email would get it) or `domain_trial_used` (ask a teammate for an invite). `null` when `credit_offer` is set, once they belong to an org, or when there's no work email domains offer. */
+                credit_unavailable: ({
+                    /** @enum {string} */
+                    reason: "public_email";
+                    /** @description Trial credit a work email would get, in US cents. */
+                    amount_cents: number;
+                    /** @description Days that credit lasts. */
+                    duration_days: number;
+                } | {
+                    /** @enum {string} */
+                    reason: "domain_trial_used";
+                    /** @description Work email domain that already had a trial. */
+                    domain: string;
+                }) | null;
+                /** @description Why `project`'s organization can't start agent sessions, from its billing; `null` when it can or without a `project`. While set, `first_test` points at the billing page. */
+                sessions_blocked: {
+                    /** @enum {string} */
+                    reason: "overdue_invoice" | "subscription_on_hold" | "no_active_plan" | "spend_cap_reached";
+                    message: string;
+                } | null;
+                /** @description Project the project items describe: the one in `x-project-slug` / `x-project-id`, or the caller's only project. */
+                project: {
+                    id: number;
+                    slug: string;
+                    name: string;
+                    org_id: number;
+                } | null;
+                /** @description The caller's projects. With more than one, pass a project header to get project items. */
+                projects: {
+                    id: number;
+                    slug: string;
+                }[];
+                /** @description `null` without a `project`. */
+                slack: {
+                    /** @description Slack workspaces the project's org installed the Empirical app in. */
+                    workspaces: {
+                        team_id: string;
+                        team_name: string;
+                    }[];
+                    /** @description Channels registered to the project's org, by mentioning @Empirical in them. */
+                    channels: {
+                        id: number;
+                        name: string | null;
+                        team_name: string | null;
+                    }[];
+                } | null;
+                /**
+                 * @description First required item still to do; `null` when onboarded.
+                 * @enum {string|null}
+                 */
+                next_item_id: "create_org" | "create_project" | "first_test" | "connect_slack" | null;
+                /** @description Listed in the order to do them. */
+                items: components["schemas"]["OnboardingItem"][];
+            };
+        };
+        OnboardingItem: {
+            /** @enum {string} */
+            id: "create_org" | "create_project" | "first_test" | "connect_slack";
+            /** @enum {string} */
+            scope: "account" | "org" | "project";
+            title: string;
+            description: string;
+            /**
+             * @description Worked out from data. `blocked` until every `depends_on` item is done.
+             * @enum {string}
+             */
+            status: "done" | "todo" | "blocked";
+            /** @description Optional items can be skipped or dismissed. */
+            required: boolean;
+            depends_on: ("create_org" | "create_project" | "first_test" | "connect_slack")[];
+            /** @description How to do the item now; `null` when done or blocked. */
+            action: ({
+                /** @enum {string} */
+                kind: "api";
+                /** @description OpenAPI operation to call; read its body schema from `GET /api/endpoints`. */
+                operation_id: string;
+                /** @enum {string} */
+                method: "POST";
+                path: string;
+                headers?: {
+                    [key: string]: string;
+                };
+                body_example: {
+                    [key: string]: unknown;
+                };
+                inputs: {
+                    /** @description Field to ask the user for. */
+                    name: string;
+                    /** @description What to ask. */
+                    description: string;
+                    required: boolean;
+                    /** @description Sample answers to show the user. */
+                    examples?: string[];
+                }[];
+            } | {
+                /** @enum {string} */
+                kind: "browser";
+                url: string;
+                /** @description Why this needs a person. */
+                reason: string;
+            }) | null;
+        };
+        OrderFormLine: {
+            /** @description Order form line ID. */
+            id: number;
+            /** @description ID of the parent order form. */
+            order_form_id: number;
+            /** @description Line kind, e.g. `tier` or `addon`. */
             kind: string;
-            /** @description Originating order-form line ID, if any. */
-            order_form_line_id: number | null;
-            /** @description Tier name, if applicable. */
+            /** @description Pricing tier name. */
             tier: string | null;
             /** @description Display label. */
             label: string | null;
-            /** @description Base price in cents. */
+            /** @description Base price for the line in cents. */
             base_price_cents: number;
-            /** @description Currency of this line. */
-            currency: string;
-            /** @description Display order within the invoice. */
+            /** @description Ordering of the line within the order form. */
             sort_order: number;
-            /** @description Metered usage rows for this billing line. */
-            meters: components["schemas"]["InvoiceBillingLineMeter"][];
+            /** @description Metering rows attached to this line. */
+            meters: components["schemas"]["OrderFormLineMeter"][];
         };
-        InvoiceBillingLineMeter: {
+        OrderFormLineMeter: {
             /** @description Meter row ID. */
             id: number;
-            /** @description Parent billing line ID. */
-            invoice_billing_line_id: number;
+            /** @description ID of the order form line this meter belongs to. */
+            order_form_line_id: number;
             /** @description Meter name. */
             meter: string;
-            /** @description Quantity included before overage. */
+            /** @description Quantity included before overage applies. */
             included_qty: number | null;
-            /** @description Billed overage quantity (may be fractional). */
-            billed_overage_qty: number | null;
             /** @description Per-unit overage price in cents. */
             overage_price_cents: number | null;
-            /** @description Display order within the billing line. */
+            /** @description Ordering of the meter within its line. */
             sort_order: number;
-        };
-        ReplaceInvoiceBillingLinesRequest: {
-            billing_lines: {
-                period_month?: string | null;
-                fx_rate?: number | null;
-                /** @enum {string} */
-                kind?: "tier" | "addon";
-                project_id?: number | null;
-                order_form_line_id?: number | null;
-                tier?: string | null;
-                label?: string | null;
-                base_price_cents: number;
-                currency?: string;
-                meters: {
-                    meter: string;
-                    included_qty?: number | null;
-                    billed_overage_qty?: number | null;
-                    overage_price_cents?: number | null;
-                }[];
-            }[];
-        };
-        InvoiceGenerateError: {
-            /** @description Error message. */
-            error: string;
-            /** @description Upstream response body, if any. */
-            details: string;
-        };
-        SendInvoiceResponse: {
-            /** @description Human-readable confirmation message. */
-            message: string;
-            /** @description ID of the sent invoice. */
-            invoiceId: string;
-            invoice: components["schemas"]["InvoiceWithOrg"];
-            /** @description Echo of the request body. */
-            received: {
-                /** @description Whether this was sent as a test email. */
-                is_test_email?: boolean;
-            };
-        };
-        InvoicePdfDownloadUrlResponse: {
-            /** @description Absolute URL to download the invoice PDF. */
-            download_url: string;
         };
         OrderFormListResponse: {
             /** @description The page of order forms. */
@@ -5695,6 +10858,19 @@ export interface components {
                 order_forms: components["schemas"]["OrderFormWithDetail"][];
             };
             pagination: components["schemas"]["Pagination"];
+        };
+        OrderFormOrgNotFoundError: {
+            /** @description Human-readable error message. */
+            error: string;
+        };
+        OrderFormPdfUploadRequest: {
+            pdf_base64: string;
+        };
+        OrderFormResponse: {
+            /** @description Response payload. */
+            data: {
+                order_form: components["schemas"]["OrderFormWithDetail"];
+            };
         };
         OrderFormWithDetail: {
             /** @description Order form ID. */
@@ -5757,550 +10933,162 @@ export interface components {
             /** @description Pricing lines on the order form. */
             lines: components["schemas"]["OrderFormLine"][];
         };
-        OrderFormLine: {
-            /** @description Order form line ID. */
-            id: number;
-            /** @description ID of the parent order form. */
-            order_form_id: number;
-            /** @description Line kind, e.g. `tier` or `addon`. */
-            kind: string;
-            /** @description Pricing tier name. */
-            tier: string | null;
-            /** @description Display label. */
-            label: string | null;
-            /** @description Base price for the line in cents. */
-            base_price_cents: number;
-            /** @description Ordering of the line within the order form. */
-            sort_order: number;
-            /** @description Metering rows attached to this line. */
-            meters: components["schemas"]["OrderFormLineMeter"][];
+        OrgCreateRequest: {
+            /** @description Organization display name. */
+            name: string;
+            /** @description Let anyone with the caller's (non-public) email domain auto-join the org on sign-in. The domain is derived server-side from the caller's verified email; it is never accepted as input. Ignored when another org already claims the domain. */
+            allow_domain_join?: boolean;
         };
-        OrderFormLineMeter: {
-            /** @description Meter row ID. */
-            id: number;
-            /** @description ID of the order form line this meter belongs to. */
-            order_form_line_id: number;
-            /** @description Meter name. */
-            meter: string;
-            /** @description Quantity included before overage applies. */
-            included_qty: number | null;
-            /** @description Per-unit overage price in cents. */
-            overage_price_cents: number | null;
-            /** @description Ordering of the meter within its line. */
-            sort_order: number;
-        };
-        OrderFormResponse: {
+        OrgCreateResponse: {
             /** @description Response payload. */
             data: {
-                order_form: components["schemas"]["OrderFormWithDetail"];
+                org: components["schemas"]["Organization"];
+                /** @description Trial credit from the credit offer the organization claimed, or null when none applied. */
+                credit_grant: {
+                    /** @description Trial credit granted, in US cents. */
+                    amount_cents: number;
+                    /** @description ISO-8601 timestamp the credit expires. */
+                    expires_at: string;
+                } | null;
             };
         };
-        OrderFormOrgNotFoundError: {
-            /** @description Human-readable error message. */
-            error: string;
-        };
-        CreateOrderFormRequest: {
+        OrgInvite: {
+            /** @description Invite ID. */
+            id: number;
+            /** @description Organization ID. */
             org_id: number;
-            /** @enum {string} */
-            pricing_model: "slab" | "fixed";
-            form_date?: string | null;
-            subscription_start_date?: string | null;
-            term_months?: number | null;
-            end_date?: string | null;
-            status?: string;
-            /** Format: date-time */
-            signed_at?: string | null;
-            contract_currency?: string;
-            pdf_r2_key?: string | null;
-            lines: {
-                /** @enum {string} */
-                kind?: "tier" | "addon";
-                tier?: string | null;
-                label?: string | null;
-                base_price_cents: number;
-                meters?: {
-                    meter: string;
-                    included_qty?: number | null;
-                    overage_price_cents?: number | null;
-                }[];
-            }[];
+            /** @description Invited email (lowercased). */
+            email: string;
+            /** @description User id of the inviting member. */
+            invited_by: string;
+            /**
+             * @description Invite lifecycle status.
+             * @enum {string}
+             */
+            status: "pending" | "accepted" | "revoked";
+            /** @description Creation timestamp (ISO 8601). */
+            created_at: string;
+            /** @description Acceptance timestamp (ISO 8601), if accepted. */
+            accepted_at: string | null;
         };
-        UpdateOrderFormRequest: {
-            org_id?: number;
-            /** @enum {string} */
-            pricing_model?: "slab" | "fixed";
-            form_date?: string | null;
-            subscription_start_date?: string | null;
-            term_months?: number | null;
-            end_date?: string | null;
-            status?: string;
-            /** Format: date-time */
-            signed_at?: string | null;
-            contract_currency?: string;
-            pdf_r2_key?: string | null;
-            lines?: {
-                /** @enum {string} */
-                kind?: "tier" | "addon";
-                tier?: string | null;
-                label?: string | null;
-                base_price_cents: number;
-                meters?: {
-                    meter: string;
-                    included_qty?: number | null;
-                    overage_price_cents?: number | null;
-                }[];
-            }[];
-        };
-        OrderFormPdfUploadRequest: {
-            pdf_base64: string;
-        };
-        PlanAssignmentListResponse: {
-            /** @description The page of plan assignments. */
+        OrgInviteListResponse: {
+            /** @description Response payload. */
             data: {
-                plan_assignments: components["schemas"]["PlanAssignment"][];
+                invites: components["schemas"]["OrgInvite"][];
+            };
+        };
+        OrgInviteResponse: {
+            /** @description Response payload. */
+            data: {
+                invite: components["schemas"]["OrgInvite"];
+                /** @description Whether the invite email was delivered. */
+                email_sent: boolean;
+            };
+        };
+        OrgInviteRevokeResponse: {
+            /** @description Response payload. */
+            data: {
+                invite: components["schemas"]["OrgInvite"];
+            };
+        };
+        OrgInvoice: components["schemas"]["EmpiricalOrgInvoice"] | components["schemas"]["DodoOrgInvoice"];
+        OrgInvoiceListResponse: {
+            /** @description Response payload. */
+            data: {
+                invoices: components["schemas"]["OrgInvoice"][];
+            };
+        };
+        OrgListResponse: {
+            /** @description Response payload. */
+            data: {
+                orgs: components["schemas"]["OrganizationWithProjects"][];
+            };
+        };
+        OrgMember: {
+            /** @description User ID. */
+            id: string;
+            /** @description User email address. */
+            email: string;
+            /** @description Display name (falls back to email). */
+            name: string;
+            /** @description Avatar URL (may be empty). */
+            picture: string;
+            /** @description Account creation timestamp (ISO 8601). */
+            created_at: string | null;
+            /** @description Last sign-in timestamp (ISO 8601). */
+            last_sign_in_at: string | null;
+        };
+        OrgMembersResponse: {
+            /** @description The page of org members. */
+            data: {
+                members: components["schemas"]["OrgMember"][];
             };
             pagination: components["schemas"]["Pagination"];
         };
-        PlanAssignment: {
-            /** @description Plan assignment ID. */
-            id: number;
-            /** @description Organisation this assignment belongs to. */
-            org_id: number;
-            /** @description Order form line that backs this assignment. */
-            order_form_line_id: number;
-            /** @description ISO-8601 timestamp the assignment starts. */
-            effective_from: string;
-            /** @description ISO-8601 timestamp the assignment ends, or null for open-ended. */
-            effective_to: string | null;
-            /** @description Origin: `order_form`, `derived_from_invoice`, or `manual`. */
-            source: string;
-            /** @description Whether the assignment is pinned. */
-            pinned: boolean;
-            /** @description Arbitrary JSON overrides for the plan, or null. */
-            custom_overrides?: unknown;
-            /** @description ISO-8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO-8601 last-update timestamp. */
-            updated_at: string;
-        };
-        PlanAssignmentResponse: {
+        OrgPlanResponse: {
             /** @description Response payload. */
             data: {
-                plan_assignment: components["schemas"]["PlanAssignment"];
-            };
-        };
-        CreatePlanAssignmentBadRequest: components["schemas"]["ErrorResponse"] | {
-            /** @description Reason the assignment could not be created. */
-            error: string;
-        };
-        CreatePlanAssignmentRequest: {
-            /** @description Organisation this plan assignment belongs to. */
-            org_id: number;
-            /** @description Order form line that backs this assignment. */
-            order_form_line_id: number;
-            /**
-             * Format: date-time
-             * @description When the assignment starts being effective (timestamptz).
-             */
-            effective_from: string | null;
-            /**
-             * Format: date-time
-             * @description When the assignment stops being effective, or null for open-ended.
-             */
-            effective_to?: string | null;
-            /**
-             * @description Origin of the assignment. Defaults to `manual`.
-             * @enum {string}
-             */
-            source?: "order_form" | "derived_from_invoice" | "manual";
-            /** @description Whether the assignment is pinned. Defaults false. */
-            pinned?: boolean;
-            /** @description Arbitrary JSON overrides for the plan. */
-            custom_overrides?: unknown;
-        };
-        UpdatePlanAssignmentRequest: {
-            /** @description Organisation this plan assignment belongs to. */
-            org_id?: number;
-            /** @description Order form line that backs this assignment. */
-            order_form_line_id?: number;
-            /**
-             * Format: date-time
-             * @description When the assignment starts being effective (timestamptz).
-             */
-            effective_from?: string | null;
-            /**
-             * Format: date-time
-             * @description When the assignment stops being effective, or null for open-ended.
-             */
-            effective_to?: string | null;
-            /**
-             * @description Origin of the assignment.
-             * @enum {string}
-             */
-            source?: "order_form" | "derived_from_invoice" | "manual";
-            /** @description Whether the assignment is pinned. */
-            pinned?: boolean;
-            /** @description Arbitrary JSON overrides for the plan. */
-            custom_overrides?: unknown;
-        };
-        ApiKeyListResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The project's API keys (secrets truncated). */
-                api_keys: components["schemas"]["TruncatedProjectApiKey"][];
-            };
-        };
-        TruncatedProjectApiKey: {
-            /** @description API key ID. */
-            id: number;
-            /** @description Project the key belongs to. */
-            project_id: number | null;
-            /** @description Human-readable name for the key. */
-            name: string;
-            /** @description User ID of the creator, if known. */
-            created_by: string | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string | null;
-            /** @description ISO 8601 timestamp the key was last updated. */
-            updated_at: string | null;
-            /** @description User ID of the last updater, if known. */
-            updated_by: string | null;
-            /** @description ISO 8601 timestamp the key was last used. */
-            last_used_at: string | null;
-            /** @description Whether the key is disabled. */
-            is_disabled: boolean | null;
-            /** @description Whether the key is an internal service key. */
-            is_internal: boolean | null;
-            /** @description Resolved details for the creating user, if available. */
-            created_by_user_detail: {
-                /** @description User ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description User display name. */
-                name: string;
-                /** @description User avatar URL. */
-                picture: string;
-            } | null;
-            /** @description Resolved details for the last updating user, if available. */
-            updated_by_user_detail: {
-                /** @description User ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description User display name. */
-                name: string;
-                /** @description User avatar URL. */
-                picture: string;
-            } | null;
-            /** @description Truncated preview of the API key. */
-            api_key_truncated: string;
-        };
-        ApiKeyCreateResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The created API key(s), with full secret. */
-                api_keys: components["schemas"]["CreatedProjectApiKey"][];
-            };
-        };
-        CreatedProjectApiKey: {
-            /** @description API key ID. */
-            id: number;
-            /** @description Project the key belongs to. */
-            project_id: number | null;
-            /** @description Human-readable name for the key. */
-            name: string;
-            /** @description User ID of the creator, if known. */
-            created_by: string | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string | null;
-            /** @description ISO 8601 timestamp the key was last updated. */
-            updated_at: string | null;
-            /** @description User ID of the last updater, if known. */
-            updated_by: string | null;
-            /** @description ISO 8601 timestamp the key was last used. */
-            last_used_at: string | null;
-            /** @description Whether the key is disabled. */
-            is_disabled: boolean | null;
-            /** @description Whether the key is an internal service key. */
-            is_internal: boolean | null;
-            /** @description Resolved details for the creating user, if available. */
-            created_by_user_detail: {
-                /** @description User ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description User display name. */
-                name: string;
-                /** @description User avatar URL. */
-                picture: string;
-            } | null;
-            /** @description Resolved details for the last updating user, if available. */
-            updated_by_user_detail: {
-                /** @description User ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description User display name. */
-                name: string;
-                /** @description User avatar URL. */
-                picture: string;
-            } | null;
-            /** @description The full API key secret (returned only once). */
-            api_key: string;
-        };
-        CreateApiKeyRequest: {
-            /** @description Human-readable name for the API key. */
-            name: string;
-        };
-        ApiKeySuccessResponse: {
-            /** @description Response payload. */
-            data: {
-                /**
-                 * @description Always true on success.
-                 * @enum {boolean}
-                 */
-                success: true;
-            };
-        };
-        UpdateApiKeyRequest: {
-            /**
-             * @description Whether to enable or disable the API key.
-             * @enum {string}
-             */
-            action: "enable" | "disable";
-        };
-        ServiceTokenListResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Service tokens, newest first. */
-                service_tokens: components["schemas"]["ServiceToken"][];
-            };
-        };
-        ServiceToken: {
-            /** @description Service token ID. */
-            id: number;
-            /** @description Leading, non-secret prefix of the token value. */
-            token_prefix: string;
-            /** @description Name of the service the token was issued to. */
-            service_name: string;
-            /** @description User ID that issued the token, if any. */
-            created_by: string | null;
-            /** @description When the token was created (ISO-8601). */
-            created_at: string;
-            /** @description When the token was last used (ISO-8601), or null. */
-            last_used_at: string | null;
-            /** @description When the token was revoked (ISO-8601), or null. */
-            revoked_at: string | null;
-        };
-        ServiceTokenCreatedResponse: {
-            /** @description Response payload. */
-            data: {
-                service_token: components["schemas"]["ServiceToken"];
-                /** @description The full secret token value. Returned only at creation time — store it now, it cannot be retrieved later. */
-                token: string;
-            };
-        };
-        ServiceTokenResponse: {
-            /** @description Response payload. */
-            data: {
-                service_token: components["schemas"]["ServiceToken"];
-            };
-        };
-        SandboxAuthRefreshResponse: {
-            /** @description Newly minted short-lived sandbox access token. */
-            access_token: string;
-            /** @description Access token lifetime in seconds. */
-            expires_in: number;
-            /** @description ISO 8601 timestamp when the auth session expires. */
-            expires_at: string;
-            /** @description Project the refreshed token is scoped to. */
-            project_id: number;
-        };
-        SandboxAuthRefreshError: {
-            /** @description Machine-readable failure reason. */
-            error: string;
-        };
-        EnqueueTestCasesSyncResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Always true once the job is enqueued. */
-                queued: boolean;
-            };
-        };
-        EnqueueTestCasesSyncRequest: {
-            /** @description Project whose test cases should be synced. */
-            project_id: number;
-            /** @description Commit SHA to sync test cases from. */
-            commit_sha: string;
-            /** @description Base branch the commit belongs to. */
-            base_branch: string;
-        };
-        ScheduleSnoozeExpiryResponse: {
-            /** @description Response payload. */
-            data: {
-                /**
-                 * @description Always true when the alarm was registered.
-                 * @enum {boolean}
-                 */
-                scheduled: true;
-            };
-        };
-        ScheduleSnoozeExpiryRequest: {
-            /** @description ID of the snooze whose expiry alarm to register. */
-            snooze_id: number;
-            /** @description ISO timestamp at which the snooze expires and the callback fires. */
-            snooze_until: string;
-        };
-        LinearWebhookResponse: {
-            /** @description Whether the webhook was accepted. */
-            success: boolean;
-        };
-        RequestIngestionWebhook: {
-            /** @description Raw provider webhook payload (JSON object). */
-            payload: {
-                [key: string]: unknown;
-            };
-            /** @description Raw request body, used for signature validation. */
-            body: string;
-            /** @description Provider signature header for the delivery. */
-            signature?: string | null;
-        };
-        JiraWebhookResponse: {
-            /** @description Whether ingestion succeeded. */
-            success?: boolean;
-            /** @description True when the issue lacks the `empirical` trigger label. */
-            skipped?: boolean;
-            /** @description ID of the created/existing request. */
-            requestId?: number;
-            /** @description ID of the created chat session. */
-            sessionId?: number;
-            /** @description Ingestion step reached, when reported. */
-            step?: string;
-            /** @description Error detail when ingestion fails. */
-            error?: unknown;
-        };
-        SpotInterruptionResponse: {
-            /** @description Response payload. */
-            data: {
-                /**
-                 * @description Whether the shard was re-dispatched, or the event needed no action.
-                 * @enum {string}
-                 */
-                action: "reenqueued" | "skipped";
-                /** @description Why the event was skipped; absent on re-enqueue. */
-                reason?: string;
-            };
-        };
-        SpotInterruptionRequest: {
-            /** @description The stopped ECS task's `startedBy` tag (`emp/<runId>/<shard>/<jobType>`). */
-            started_by: string;
-            /**
-             * @description AWS region the task-state-change event came from.
-             * @enum {string}
-             */
-            region: "us-east-1" | "ap-south-1";
-            /** @description ECS task id of the interrupted task, for the audit trail. */
-            task_id?: string;
-            /** @description ECS `stoppedReason`, for the audit trail. */
-            stopped_reason?: string;
-        };
-        CreateProjectResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The created project. */
-                project: {
-                    /** @description Project ID. */
-                    id: number;
-                    /** @description Project name. */
+                /** @description Whether the org has a plan assignment in effect now. */
+                has_plan: boolean;
+                /** @description The shared plan in effect, or null when the org has no plan or is on a custom plan. */
+                plan: {
+                    /** @description Plan name, as shown to customers. */
                     name: string;
-                    /** @description Repository name. */
-                    repo_name: string;
-                    /** @description Organisation ID. */
-                    org_id: number;
-                    /** @description Project slug. */
-                    slug: string;
-                };
-                /** @description Whether the backing GitHub repo was created. When false the project exists but repo provisioning failed and needs a retry. */
-                repo_created: boolean;
+                    /** @description Currency of the prices below, e.g. `usd`. */
+                    currency: string;
+                    /** @description Monthly base price in cents of `currency`. */
+                    base_price_cents: number;
+                    /** @description Metered allowances and overage rates. */
+                    meters: {
+                        /** @description Meter key, e.g. `ai_credits` or `test_minutes`. */
+                        meter: string;
+                        /** @description Units included each month. */
+                        included_qty: number | null;
+                        /** @description Price per unit above the allowance, in cents of `currency`; may be fractional. */
+                        overage_price_cents: number | null;
+                    }[];
+                } | null;
+                /** @description Whether the plan in effect is a trial, where usage draws from credits. The month summary has the credit. */
+                trial: boolean;
+                /** @description The org's live Dodo subscription now, or null when it's billed by invoice or has none. */
+                subscription: {
+                    /**
+                     * @description `past_due` / `on_hold`: the last renewal payment failed and is being retried. A paused subscription, or one whose plan was ended (End plan) whatever its Dodo status, holds no plan, so `subscription` is null.
+                     * @enum {string}
+                     */
+                    status: "active" | "past_due" | "on_hold";
+                    /** @description When the subscription next renews (ISO 8601). */
+                    next_billing_date: string;
+                } | null;
             };
         };
-        SimpleErrorResponse: {
-            /** @description Error message. */
-            error: string;
-        };
-        CheckSlugResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether the slug is free. */
-                available: boolean;
-            };
-        };
-        ProjectCloneResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Repository URL on git.empirical.run. Authenticate with an Empirical credential (session token or project API key) as the HTTP password. */
-                clone_url: string;
-                /** @description HTTP Basic username git-worker expects. */
-                username: string;
-                /** @description Repository name. */
-                name: string;
-                /** @description Default branch of the repository. */
-                default_branch: string;
-            };
-        };
-        BranchExistsResponse: {
-            /** @description Whether the branch exists. */
-            exists: boolean;
-        };
-        MergeBranchesResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether the merge happened. */
-                merged?: boolean;
-                /** @description Human-readable result. */
-                message: string;
-                /** @description URL of the PR, when one was created. */
-                pull_request_url?: string;
-            };
-        };
-        ProjectWrappedResponse: {
-            /** @description Response payload. */
-            data: {
-                project: components["schemas"]["Project"];
-            };
-        };
-        Project: {
+        OrgProject: {
             /** @description Project ID. */
             id: number;
-            /** @description Organisation that owns the project. */
+            /** @description Owning organization ID. */
             org_id: number;
             /** @description Project display name. */
             name: string;
-            /** @description Unique project slug. */
+            /** @description URL slug for the project. */
             slug: string;
-            /** @description Repository name. */
+            /** @description Backing repository name. */
             repo_name: string;
-            /** @description Repository owner. */
+            /** @description Repository owner/org. */
             repo_owner: string;
             /**
              * @description Repository host.
              * @enum {string}
              */
             repo_host: "github" | "pierre_code_storage";
-            /** @description Default branch of the repository. */
+            /** @description Default branch name. */
             default_branch: string;
-            /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
-            protected_branches: string[];
-            /** @description Whether email reporting is enabled. */
-            has_email_reporting: boolean | null;
             /**
-             * @description Concurrency limit scope for test runs.
+             * @description Concurrency scope for test runs.
              * @enum {string}
              */
             test_run_concurrency_limit: "none" | "project" | "environment" | "branch_environment";
             /**
-             * @description Behaviour when the concurrency limit is hit.
+             * @description Behavior when the concurrency limit is hit.
              * @enum {string}
              */
             test_run_concurrency_behavior: "cancel_previous" | "queue_new";
@@ -6309,9 +11097,9 @@ export interface components {
              * @enum {string}
              */
             test_run_region: "us-east-1" | "ap-south-1";
-            /** @description Number of shards to split test runs into. */
+            /** @description Fixed shard count, if configured. */
             test_run_shards: number | null;
-            /** @description URL of the project profile icon. */
+            /** @description Project icon URL. */
             profile_icon_url: string | null;
             /** @description Raw owners.yaml contents. */
             owners_yaml_raw: string | null;
@@ -6319,323 +11107,107 @@ export interface components {
             has_environments_yaml: boolean | null;
             /** @description Whether the project is active. */
             is_active: boolean;
-            /** @description Commit SHA of the last successful test-cases sync. */
+            /** @description Commit SHA of the last test-case sync. */
             last_synced_test_cases_commit_sha: string | null;
-            /** @description Error message of the last failed sync, if any. */
+            /** @description Last test-case sync error, if any. */
             test_cases_sync_error: string | null;
-            /** @description ISO 8601 timestamp of the last sync error. */
+            /** @description When the last sync error occurred (ISO 8601). */
             test_cases_sync_error_at: string | null;
         };
-        ProjectResponse: {
+        OrgRunnerBackendListResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Project ID. */
-                id: number;
-                /** @description Organisation that owns the project. */
-                org_id: number;
-                /** @description Project display name. */
-                name: string;
-                /** @description Unique project slug. */
-                slug: string;
-                /** @description Repository name. */
-                repo_name: string;
-                /** @description Repository owner. */
-                repo_owner: string;
-                /**
-                 * @description Repository host.
-                 * @enum {string}
-                 */
-                repo_host: "github" | "pierre_code_storage";
-                /** @description Default branch of the repository. */
-                default_branch: string;
-                /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
-                protected_branches: string[];
-                /** @description Whether email reporting is enabled. */
-                has_email_reporting: boolean | null;
-                /**
-                 * @description Concurrency limit scope for test runs.
-                 * @enum {string}
-                 */
-                test_run_concurrency_limit: "none" | "project" | "environment" | "branch_environment";
-                /**
-                 * @description Behaviour when the concurrency limit is hit.
-                 * @enum {string}
-                 */
-                test_run_concurrency_behavior: "cancel_previous" | "queue_new";
-                /**
-                 * @description Region test runs execute in.
-                 * @enum {string}
-                 */
-                test_run_region: "us-east-1" | "ap-south-1";
-                /** @description Number of shards to split test runs into. */
-                test_run_shards: number | null;
-                /** @description URL of the project profile icon. */
-                profile_icon_url: string | null;
-                /** @description Raw owners.yaml contents. */
-                owners_yaml_raw: string | null;
-                /** @description Whether the repo defines environments.yaml. */
-                has_environments_yaml: boolean | null;
-                /** @description Whether the project is active. */
-                is_active: boolean;
-                /** @description Commit SHA of the last successful test-cases sync. */
-                last_synced_test_cases_commit_sha: string | null;
-                /** @description Error message of the last failed sync, if any. */
-                test_cases_sync_error: string | null;
-                /** @description ISO 8601 timestamp of the last sync error. */
-                test_cases_sync_error_at: string | null;
+                runner_backends: {
+                    /** @description Runner backend ID. */
+                    id: number;
+                    /** @description Organisation that owns the installation. */
+                    org_id: number;
+                    /** @description Human-readable name. */
+                    name: string;
+                    /** @description AWS account the installation runs in. */
+                    aws_account_id: string;
+                    /** @description AWS region of the installation. */
+                    region: string;
+                    /** @description Role api-worker assumes to drive the plane. */
+                    role_arn: string;
+                    /** @description ECS cluster name. */
+                    cluster_name: string;
+                    /** @description CloudWatch log group of the worker. */
+                    log_group_name: string;
+                    /** @description Worker container name. */
+                    container_name: string;
+                    /** @description Job queue URLs are `${queue_prefix}-${machineSize}`. */
+                    queue_prefix: string;
+                    /**
+                     * @description `pending` until verified; only `active` backends receive runs.
+                     * @enum {string}
+                     */
+                    status: "pending" | "active" | "disabled";
+                    /** @description ISO-8601 time of the last successful verify. */
+                    last_verified_at: string | null;
+                    /** @description ISO-8601 time of the last verify, manual or scheduled, whatever its outcome. */
+                    last_checked_at: string | null;
+                    /** @description Outcome of the last verify; null if never run. */
+                    last_check_ok: boolean | null;
+                    /** @description Every check from the last verify. */
+                    last_check_results: components["schemas"]["RunnerBackendCheck"][] | null;
+                    /** @description ISO-8601 start of the current run of failed checks; null while passing. A failing check does not change `status`. */
+                    check_failing_since: string | null;
+                    /** @description Release of the CloudFormation template the installation runs, as its stack last reported. */
+                    stack_version: string | null;
+                    /** @description ISO-8601 time that release was published, if known. */
+                    stack_released_at: string | null;
+                    /** @description Worker image the installation runs. */
+                    worker_version: string | null;
+                    /** @description Job protocol version the installation speaks. */
+                    protocol_version: string | null;
+                    /** @description Optional features the installation supports. */
+                    capabilities: string[];
+                    /** @description ARN of the CloudFormation stack that registered the installation. */
+                    stack_id: string | null;
+                    /** @description ISO-8601 time the installation's stack first called home; null until then. */
+                    registration_claimed_at: string | null;
+                    /** @description ISO-8601 expiry of the current registration link, if one was minted. Ignored once claimed. */
+                    registration_token_expires_at: string | null;
+                    /** @description ISO-8601 creation time. */
+                    created_at: string;
+                    /** @description ISO-8601 last-update time. */
+                    updated_at: string;
+                    /** @description Projects whose new runs use this runner. */
+                    projects: {
+                        id: number;
+                        name: string;
+                        slug: string;
+                    }[];
+                }[];
             };
         };
-        ProjectKvGetResponse: {
+        OrgUpdateRequest: {
+            /** @description Organization display name. */
+            name?: string;
+            /** @description Email domains that map users to this org. */
+            email_domains?: string[];
+            /** @description Recipients for billing communication. */
+            billing_emails?: string[];
+            /** @description Billing currency (e.g. `usd`, `inr`). */
+            billing_currency?: string;
+            /** @description Deposit bank account key. */
+            deposit_bank_key?: string;
+            /** @description Legal billing name, or `null` to clear. */
+            billing_name?: string | null;
+            /** @description Billing address, or `null` to clear. */
+            billing_address_lines?: string | null;
+            /** @description GSTIN, or `null` to clear. */
+            billing_gstin?: string | null;
+            /** @description Place of supply, or `null` to clear. */
+            place_of_supply?: string | null;
+            /** @description Payment terms in days, or `null` to clear. */
+            payment_terms_days?: number | null;
+        };
+        OrgUpdateResponse: {
             /** @description Response payload. */
             data: {
-                /** @description The key read. */
-                key: string;
-                /** @description The stored value, if any. */
-                value?: unknown;
-            };
-        };
-        ProjectKvSetResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The key written. */
-                key: string;
-                /** @description Always true. */
-                success: boolean;
-            };
-        };
-        ProjectGitTokenResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Installation access token. */
-                token: string;
-                /** @description Git host (github.com). */
-                host: string;
-                /** @description Username to use with the token. */
-                username: string;
-            };
-        };
-        ProjectStaticIpProxyTokenResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Static-IP proxy access token, HMAC signed. */
-                token: string;
-                /** @description Unix seconds at which the token stops being accepted. */
-                expires_at: number;
-            };
-        };
-        MergeRequestsResponse: {
-            /** @description The page of merge requests. */
-            data: components["schemas"]["MergeRequest"][];
-            pagination: components["schemas"]["Pagination"];
-        };
-        MergeRequest: {
-            /** @description Merge request ID. */
-            id: number;
-            /** @description Owning project ID. */
-            project_id: number;
-            /** @description Branch merged into. */
-            base_branch: string;
-            /** @description Branch merged from. */
-            branch_to_merge: string;
-            /**
-             * @description Merge request status.
-             * @enum {string}
-             */
-            status: "requested" | "merged" | "deleted_with_no_changes" | "created_pr_but_merged_failed" | "error";
-            /** @description GitHub pull request number, if created. */
-            pr_number: number | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-        };
-        RenameBranchResponse: {
-            /** @description Always true. */
-            success: boolean;
-            /** @description Human-readable result. */
-            message: string;
-        };
-        CompareBranchesResponse: {
-            /** @description Commits head is ahead by. */
-            ahead: number;
-            /** @description Commits head is behind by. */
-            behind: number;
-            /** @description Number of files changed. */
-            files_changed: number;
-            /** @description Number of commits in the comparison. */
-            total_commits: number;
-            /** @description GitHub compare URL. */
-            comparison_url: string;
-        };
-        ProjectBranchesResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Recent branches with test-run activity. */
-                branches: components["schemas"]["RecentBranch"][];
-                /** @description Total matching branches. */
-                total: number;
-            };
-        };
-        RecentBranch: {
-            /** @description Branch name. */
-            name: string;
-            /** @description ID of the latest test run on the branch. */
-            latest_run_id: number;
-            /** @description ISO 8601 timestamp of the latest run. */
-            latest_run_date: string | null;
-            /** @description Head commit SHA of the latest run. */
-            latest_commit_sha: string | null;
-            /** @description Number of runs in the window. */
-            run_count: number;
-            /** @description GitHub actor of the latest run. */
-            latest_github_actor: string | null;
-        };
-        RepoExistsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether the repository exists. */
-                exists: boolean;
-            };
-        };
-        RepoExistsErrorResponse: {
-            /** @description Error message. */
-            error: string;
-            /** @description Existence (false) on error. */
-            data: {
-                exists: boolean;
-            };
-        };
-        TestCasesSyncTriggeredResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether the sync job was enqueued. */
-                triggered: boolean;
-                /** @description Commit SHA the sync was enqueued for. */
-                commit_sha: string;
-            };
-        };
-        ProjectManagerSessionResponse: {
-            /** @description Response payload. */
-            data: {
-                chat_session: components["schemas"]["ChatSession"];
-                /** @description True when this request created the session, false when it returned the existing one. */
-                created: boolean;
-            };
-        };
-        ChatSession: {
-            /** @description Chat session ID. */
-            id: number;
-            /** @description Session title. */
-            title: string | null;
-            /** @description Creator user ID. */
-            created_by: string | null;
-            /** @description Creation timestamp (ISO). */
-            created_at: string;
-            /** @description Last update timestamp (ISO). */
-            updated_at: string;
-            /** @description Owning project ID. */
-            project_id: number;
-            /** @description Base branch name. */
-            base_branch: string;
-            /** @description Session mode (e.g. chat). */
-            mode: string;
-            /** @description Origin of the session. */
-            source: string;
-            /** @description Source-specific identifier. */
-            source_identifier: string;
-            /**
-             * @description Workload class, assigned server-side; null for an ordinary user chat. Read-only — no request body accepts it.
-             * @enum {string|null}
-             */
-            purpose?: "triage" | "manager" | null;
-            /** @description Requested model. */
-            model: string | null;
-            /** @description Opaque agent chat state. */
-            chat_state?: unknown;
-            /** @description Tests impacted by this session. */
-            impacted_tests?: unknown;
-            /** @description Whether the agent is awaiting user input. */
-            ask_user_for_input: boolean | null;
-            /** @description Langfuse trace ID. */
-            langfuse_trace_id: string | null;
-            /** @description Whether the session is closed. */
-            is_closed: boolean;
-            /** @description Feature flags enabled for the session. */
-            feature_flags: string[];
-            /** @description Durable outbox row for the first message. */
-            pending_first_message?: unknown;
-        };
-        ProjectListResponse: {
-            /** @description Response payload. */
-            data: {
-                projects: components["schemas"]["Project"][];
-            };
-        };
-        PatchProjectResponse: {
-            /** @description Always true. */
-            success: boolean;
-            /** @description The updated project. */
-            project: {
-                /** @description Project ID. */
-                id: number;
-                /** @description Organisation that owns the project. */
-                org_id: number;
-                /** @description Project display name. */
-                name: string;
-                /** @description Unique project slug. */
-                slug: string;
-                /** @description Repository name. */
-                repo_name: string;
-                /** @description Repository owner. */
-                repo_owner: string;
-                /**
-                 * @description Repository host.
-                 * @enum {string}
-                 */
-                repo_host: "github" | "pierre_code_storage";
-                /** @description Default branch of the repository. */
-                default_branch: string;
-                /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
-                protected_branches: string[];
-                /** @description Whether email reporting is enabled. */
-                has_email_reporting: boolean | null;
-                /**
-                 * @description Concurrency limit scope for test runs.
-                 * @enum {string}
-                 */
-                test_run_concurrency_limit: "none" | "project" | "environment" | "branch_environment";
-                /**
-                 * @description Behaviour when the concurrency limit is hit.
-                 * @enum {string}
-                 */
-                test_run_concurrency_behavior: "cancel_previous" | "queue_new";
-                /**
-                 * @description Region test runs execute in.
-                 * @enum {string}
-                 */
-                test_run_region: "us-east-1" | "ap-south-1";
-                /** @description Number of shards to split test runs into. */
-                test_run_shards: number | null;
-                /** @description URL of the project profile icon. */
-                profile_icon_url: string | null;
-                /** @description Raw owners.yaml contents. */
-                owners_yaml_raw: string | null;
-                /** @description Whether the repo defines environments.yaml. */
-                has_environments_yaml: boolean | null;
-                /** @description Whether the project is active. */
-                is_active: boolean;
-                /** @description Commit SHA of the last successful test-cases sync. */
-                last_synced_test_cases_commit_sha: string | null;
-                /** @description Error message of the last failed sync, if any. */
-                test_cases_sync_error: string | null;
-                /** @description ISO 8601 timestamp of the last sync error. */
-                test_cases_sync_error_at: string | null;
-            } | null;
-        };
-        ProjectOrgResponse: {
-            /** @description Response payload. */
-            data: {
-                org: components["schemas"]["Organisation"];
+                org: components["schemas"]["Organization"] & unknown;
             };
         };
         Organisation: {
@@ -6668,9 +11240,966 @@ export interface components {
             /** @description Payment terms in days. */
             payment_terms_days: number | null;
         };
-        RepoTransferListResponse: {
+        Organization: {
+            /** @description Organization ID. */
+            id: number;
+            /** @description Organization display name. */
+            name: string;
+            /** @description Email domains that map users to this org. */
+            email_domains: string[];
+            /** @description Creation timestamp (ISO 8601). */
+            created_at: string | null;
+            /** @description Last update timestamp (ISO 8601). */
+            updated_at: string | null;
+            /** @description User/system id that last updated the org. */
+            updated_by: string | null;
+            /** @description Recipients for billing communication. */
+            billing_emails: string[];
+            /** @description Billing currency (e.g. `usd`, `inr`). */
+            billing_currency: string;
+            /** @description Deposit bank account key. */
+            deposit_bank_key: string;
+            /** @description Legal billing name. */
+            billing_name: string | null;
+            /** @description Billing address. */
+            billing_address_lines: string | null;
+            /** @description GSTIN. */
+            billing_gstin: string | null;
+            /** @description Place of supply. */
+            place_of_supply: string | null;
+            /** @description Payment terms in days. */
+            payment_terms_days: number | null;
+        };
+        OrganizationWithProjects: {
+            /** @description Organization ID. */
+            id: number;
+            /** @description Organization display name. */
+            name: string;
+            /** @description Email domains that map users to this org. */
+            email_domains: string[];
+            /** @description Creation timestamp (ISO 8601). */
+            created_at: string | null;
+            /** @description Last update timestamp (ISO 8601). */
+            updated_at: string | null;
+            /** @description User/system id that last updated the org. */
+            updated_by: string | null;
+            /** @description Recipients for billing communication. */
+            billing_emails: string[];
+            /** @description Billing currency (e.g. `usd`, `inr`). */
+            billing_currency: string;
+            /** @description Deposit bank account key. */
+            deposit_bank_key: string;
+            /** @description Legal billing name. */
+            billing_name: string | null;
+            /** @description Billing address. */
+            billing_address_lines: string | null;
+            /** @description GSTIN. */
+            billing_gstin: string | null;
+            /** @description Place of supply. */
+            place_of_supply: string | null;
+            /** @description Payment terms in days. */
+            payment_terms_days: number | null;
+            /** @description Projects belonging to the organization. */
+            projects: components["schemas"]["OrgProject"][];
+        };
+        OrgsByEmailDomainResponse: {
             /** @description Response payload. */
-            data: components["schemas"]["RepoTransfer"][];
+            data: {
+                organisations: {
+                    /** @description Organization ID. */
+                    id: number;
+                    /** @description Organization name. */
+                    name: string;
+                }[];
+            };
+        };
+        OverlayDismissalEvent: {
+            /** @description ISO 8601 timestamp of the event. */
+            timestamp: string;
+            /** @description Environment the test ran in. */
+            environment: string | null;
+            /** @description Repository the test belongs to. */
+            repo_name: string | null;
+            /** @description Project name. */
+            project_name: string | null;
+            /** @description ID of the test run. */
+            test_run_id: string | null;
+            /** @description Name of the test. */
+            test_name: string | null;
+            /** @description Whether the dismissal succeeded. */
+            success: boolean | null;
+            /** @description Whether the result was served from cache. */
+            cache_hit: boolean | null;
+            /** @description Dismissal duration in milliseconds. */
+            duration_ms: number | null;
+            /** @description Description of the dismissed overlay. */
+            overlay_description: string | null;
+            /** @description Visible text of the dismissed overlay. */
+            overlay_text: string | null;
+            /** @description Original locator that was occluded. */
+            original_locator: string | null;
+            /** @description Input tokens consumed. */
+            tokens_input: number | null;
+            /** @description Output tokens produced. */
+            tokens_output: number | null;
+            /** @description Cost of input tokens. */
+            cost_input: number | null;
+            /** @description Cost of output tokens. */
+            cost_output: number | null;
+        };
+        OverlayDismissalEventsResponse: {
+            /** @description Project reference and the page of events. */
+            data: {
+                project: components["schemas"]["TelemetryProjectRef"];
+                /** @description The page of overlay-dismissal events. */
+                events: components["schemas"]["OverlayDismissalEvent"][];
+            };
+            pagination: components["schemas"]["Pagination"];
+        };
+        OverlayDismissalSummary: {
+            /** @description Total overlay-dismissal events in the window. */
+            total: number;
+            /** @description Number of successful dismissals. */
+            success_count: number;
+            /** @description Success rate as a percentage (0-100). */
+            success_rate: number;
+            /** @description Number of dismissals served from cache. */
+            cache_hit_count: number;
+            /** @description Cache-hit rate as a percentage (0-100). */
+            cache_hit_rate: number;
+            /** @description Average dismissal duration in milliseconds. */
+            avg_duration_ms: number;
+            /** @description Total cost across all dismissals. */
+            total_cost: number;
+        };
+        OverlayDismissalSummaryResponse: {
+            /** @description Response payload. */
+            data: {
+                project: components["schemas"]["TelemetryProjectRef"];
+                summary: components["schemas"]["OverlayDismissalSummary"];
+            };
+        };
+        /** @description Pagination metadata. */
+        Pagination: {
+            /** @description Current page (1-indexed). */
+            page: number;
+            /** @description Items per page. */
+            per_page: number;
+            /** @description Total number of items. */
+            total: number;
+            /** @description Total number of pages. */
+            total_pages: number;
+        };
+        PatchFailureGroupRequest: {
+            label?: string;
+            /** @enum {string} */
+            type?: "app" | "test";
+            /** @enum {string} */
+            status?: "open" | "resolved";
+            diagnosis?: string;
+            recommendation?: string;
+            /** @description Present → replaces the stored fingerprint wholesale; omit to keep it. */
+            fingerprint?: {
+                signals: {
+                    kind: string;
+                    value: string;
+                    /** @enum {string} */
+                    match?: "exact" | "contains" | "glob" | "regex";
+                    weight?: number;
+                    /** @enum {string} */
+                    source: "machine" | "agent" | "human";
+                    data?: {
+                        [key: string]: unknown;
+                    };
+                }[];
+            } | null;
+            /** @description Present → replaces the stored matcher wholesale (null clears it); omit to keep it. Re-submitting an identical source + description is a no-op (no revision). */
+            matcher?: {
+                /** @description Plain-JS async function source: `async ({ testRun, testCase, traceUtils }) => boolean`. */
+                source: string;
+                /** @description Human-readable summary of what the matcher matches and why; re-articulated on every edit. */
+                description: string;
+                /**
+                 * @description Input-contract version the source was written against.
+                 * @default 1
+                 */
+                contract_version: number;
+            } | null;
+            source_run_id?: number | null;
+        };
+        PatchProjectResponse: {
+            /** @description Always true. */
+            success: boolean;
+            /** @description The updated project. */
+            project: {
+                /** @description Project ID. */
+                id: number;
+                /** @description Organisation that owns the project. */
+                org_id: number;
+                /** @description Project display name. */
+                name: string;
+                /** @description Unique project slug. */
+                slug: string;
+                /** @description Repository name. */
+                repo_name: string;
+                /** @description Repository owner. */
+                repo_owner: string;
+                /**
+                 * @description Repository host.
+                 * @enum {string}
+                 */
+                repo_host: "github" | "pierre_code_storage";
+                /** @description Default branch of the repository. */
+                default_branch: string;
+                /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
+                protected_branches: string[];
+                /**
+                 * @description Concurrency limit scope for test runs.
+                 * @enum {string}
+                 */
+                test_run_concurrency_limit: "none" | "project" | "environment" | "branch_environment";
+                /**
+                 * @description Behaviour when the concurrency limit is hit.
+                 * @enum {string}
+                 */
+                test_run_concurrency_behavior: "cancel_previous" | "queue_new";
+                /**
+                 * @description Region test runs execute in.
+                 * @enum {string}
+                 */
+                test_run_region: "us-east-1" | "ap-south-1";
+                /** @description Number of shards to split test runs into. */
+                test_run_shards: number | null;
+                /** @description URL of the project profile icon. */
+                profile_icon_url: string | null;
+                /** @description Raw owners.yaml contents. */
+                owners_yaml_raw: string | null;
+                /** @description Whether the repo defines environments.yaml. */
+                has_environments_yaml: boolean | null;
+                /** @description Whether the project is active. */
+                is_active: boolean;
+                /** @description Commit SHA of the last successful test-cases sync. */
+                last_synced_test_cases_commit_sha: string | null;
+                /** @description Error message of the last failed sync, if any. */
+                test_cases_sync_error: string | null;
+                /** @description ISO 8601 timestamp of the last sync error. */
+                test_cases_sync_error_at: string | null;
+            } | null;
+        };
+        Plan: {
+            /** @description Plan ID. */
+            id: number;
+            /** @description Organisation a custom plan belongs to; null for a shared plan. */
+            org_id: number | null;
+            /** @description Order form a custom plan comes from, if any. */
+            order_form_id: number | null;
+            /** @description `tier` or `addon`. */
+            kind: string;
+            /** @description Stable unique key of a shared plan, e.g. `managed`. */
+            key: string | null;
+            /** @description Display name, as shown to customers. */
+            name: string | null;
+            /** @description Currency the plan is priced in, e.g. `usd`. */
+            currency: string;
+            /** @description Monthly base price in cents of `currency`. */
+            base_price_cents: number;
+            /** @description `active` or `retired`. Retired plans keep existing assignments. */
+            status: string;
+            /** @description Dodo product that bills this plan by subscription; null when it isn't sold through Dodo. */
+            dodo_product_id: string | null;
+            /** @description Whether the plan is sold through Dodo. Only these plans get a Dodo product and are offered at checkout. */
+            dodo_sync: boolean;
+            /** @description ISO-8601 creation timestamp. */
+            created_at: string;
+            /** @description Metered allowances and overage rates. */
+            meters: components["schemas"]["PlanMeter"][];
+        };
+        PlanAssignment: {
+            /** @description Plan assignment ID. */
+            id: number;
+            /** @description Organisation this assignment belongs to. */
+            org_id: number;
+            /** @description Plan the organisation is on. */
+            plan_id: number;
+            /** @description ISO-8601 timestamp the assignment starts. */
+            effective_from: string;
+            /** @description ISO-8601 timestamp the assignment ends, or null for open-ended. */
+            effective_to: string | null;
+            /** @description Origin: `order_form`, `derived_from_invoice`, `manual`, `trial` or `dodo`. */
+            source: string;
+            /** @description ISO-8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO-8601 last-update timestamp. */
+            updated_at: string;
+        };
+        PlanAssignmentListResponse: {
+            /** @description The page of plan assignments. */
+            data: {
+                plan_assignments: components["schemas"]["PlanAssignment"][];
+            };
+            pagination: components["schemas"]["Pagination"];
+        };
+        PlanAssignmentResponse: {
+            /** @description Response payload. */
+            data: {
+                plan_assignment: components["schemas"]["PlanAssignment"];
+            };
+        };
+        PlanListResponse: {
+            /** @description Response payload. */
+            data: {
+                plans: components["schemas"]["Plan"][];
+            };
+        };
+        PlanMeter: {
+            /** @description Plan meter ID. */
+            id: number;
+            /** @description Plan this meter belongs to. */
+            plan_id: number;
+            /** @description Meter key, e.g. `ai_credits` or `test_minutes`. */
+            meter: string;
+            /** @description Units included in the base price each month. */
+            included_qty: number | null;
+            /** @description Price per unit above the included quantity, in cents of the plan currency. May be fractional (0.5 = $0.005). Null means usage above the allowance is not billed. */
+            overage_price_cents: number | null;
+            /** @description Display order. */
+            sort_order: number;
+        };
+        PlanResponse: {
+            /** @description Response payload. */
+            data: {
+                plan: components["schemas"]["Plan"];
+            };
+        };
+        PlaywrightUtilsProxyError: {
+            /** @description Error message — the provider API key is not configured, or the proxied request failed. */
+            error: string;
+        };
+        PlaywrightUtilsProxyRequest: {
+            /** @description HTTP method to forward to the upstream provider. */
+            method: string;
+            /** @description Provider path (and query string) to call, starting with `/`. Appended to the provider's base URL. */
+            path: string;
+            /** @description Optional JSON body to forward to the upstream provider. */
+            body?: unknown;
+        };
+        PlaywrightUtilsProxyResponse: {
+            /** @description Parsed JSON body returned by the upstream provider, or null when the response was not JSON. */
+            data?: unknown;
+            /** @description Response headers returned by the upstream provider. */
+            headers: {
+                [key: string]: string;
+            };
+        };
+        PlaywrightVersionsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Supported Playwright versions, newest first. */
+                versions: string[];
+                /** @description The Playwright version used when none is chosen. */
+                default_version: string;
+            };
+        };
+        PostShardPlanRequest: {
+            /** @description Shard count this partition was built for. Stored on every row and checked against the shard's own total_shards when the plan is read. */
+            total_shards: number;
+            /** @description One entry per run_test shard. */
+            shards: {
+                /** @description 1-based index of the run_test shard. Index 0 is the run_setup job and never carries an assignment. */
+                shard_index: number;
+                /** @description Tests assigned to this shard. */
+                tests: {
+                    /** @description Playwright test id (`pw_test_id`) assigned to this shard. */
+                    id: string;
+                    /** @description Scheduled test line (`[project] › file › suite › title`). Not stored yet; the server-written run manifest is its consumer. */
+                    name: string;
+                }[];
+            }[];
+            /** @description How the partition was chosen, stored verbatim for provenance (e.g. `equal split over the canonical listing`). */
+            reason?: string;
+            /** @description Modelled wall-clock of the slowest shard, in ms. */
+            predicted_makespan_ms?: number;
+            /** @description Modelled wall-clock at the ceiling — what the run would have done without the reduction, in ms. */
+            baseline_makespan_ms?: number;
+            /** @description Heaviest single schedulable unit, in ms. The floor no shard count can beat. */
+            longest_unit_ms?: number;
+            /** @description Fraction of planned tests that had a real historical duration. */
+            coverage?: number;
+        };
+        Project: {
+            /** @description Project ID. */
+            id: number;
+            /** @description Organisation that owns the project. */
+            org_id: number;
+            /** @description Project display name. */
+            name: string;
+            /** @description Unique project slug. */
+            slug: string;
+            /** @description Repository name. */
+            repo_name: string;
+            /** @description Repository owner. */
+            repo_owner: string;
+            /**
+             * @description Repository host.
+             * @enum {string}
+             */
+            repo_host: "github" | "pierre_code_storage";
+            /** @description Default branch of the repository. */
+            default_branch: string;
+            /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
+            protected_branches: string[];
+            /**
+             * @description Concurrency limit scope for test runs.
+             * @enum {string}
+             */
+            test_run_concurrency_limit: "none" | "project" | "environment" | "branch_environment";
+            /**
+             * @description Behaviour when the concurrency limit is hit.
+             * @enum {string}
+             */
+            test_run_concurrency_behavior: "cancel_previous" | "queue_new";
+            /**
+             * @description Region test runs execute in.
+             * @enum {string}
+             */
+            test_run_region: "us-east-1" | "ap-south-1";
+            /** @description Number of shards to split test runs into. */
+            test_run_shards: number | null;
+            /** @description URL of the project profile icon. */
+            profile_icon_url: string | null;
+            /** @description Raw owners.yaml contents. */
+            owners_yaml_raw: string | null;
+            /** @description Whether the repo defines environments.yaml. */
+            has_environments_yaml: boolean | null;
+            /** @description Whether the project is active. */
+            is_active: boolean;
+            /** @description Commit SHA of the last successful test-cases sync. */
+            last_synced_test_cases_commit_sha: string | null;
+            /** @description Error message of the last failed sync, if any. */
+            test_cases_sync_error: string | null;
+            /** @description ISO 8601 timestamp of the last sync error. */
+            test_cases_sync_error_at: string | null;
+        };
+        ProjectAddonPeriod: {
+            id: number;
+            /**
+             * @description Add-on identifier.
+             * @enum {string}
+             */
+            addon: "static_ip_proxy" | "repo_ownership";
+            /** @description ISO timestamp the add-on became active. */
+            effective_from: string;
+            /** @description ISO timestamp it was turned off; null while active. */
+            effective_to: string | null;
+            /** @description Add-on plan this period bills against, when a priced one exists. Null for add-ons that are free today. */
+            plan_id: number | null;
+            created_by: string | null;
+            ended_by: string | null;
+        };
+        ProjectAddonResponse: {
+            /** @description Response payload. */
+            data: {
+                addon: components["schemas"]["ProjectAddonPeriod"];
+            };
+        };
+        ProjectAddonState: {
+            /**
+             * @description Add-on identifier.
+             * @enum {string}
+             */
+            key: "static_ip_proxy" | "repo_ownership";
+            name: string;
+            description: string;
+            /** @description Copy for the enable-confirmation dialog. Null when the add-on has nothing to warn about. */
+            billing_note: string | null;
+            /** @description True when there is an open period for this add-on. */
+            enabled: boolean;
+            /** @description effective_from of the open period, or null when disabled. */
+            active_since: string | null;
+        };
+        ProjectAiUsageByType: {
+            type: components["schemas"]["AiUsageType"];
+            sessions: number;
+            /** @description Input, output, cache-read, and cache-write tokens combined. */
+            tokens: number;
+            credits: number;
+        };
+        ProjectBranchesResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Recent branches with test-run activity. */
+                branches: components["schemas"]["RecentBranch"][];
+                /** @description Total matching branches. */
+                total: number;
+            };
+        };
+        ProjectCloneResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Repository URL on git.empirical.run. Authenticate with an Empirical credential (session token or project API key) as the HTTP password. */
+                clone_url: string;
+                /** @description HTTP Basic username git-worker expects. */
+                username: string;
+                /** @description Repository name. */
+                name: string;
+                /** @description Default branch of the repository. */
+                default_branch: string;
+            };
+        };
+        ProjectDailyAiUsage: {
+            /** @description UTC date (YYYY-MM-DD). */
+            date: string;
+            type: components["schemas"]["AiUsageType"];
+            credits: number;
+        };
+        ProjectDailyTestUsage: {
+            /** @description UTC date (YYYY-MM-DD). */
+            date: string;
+            duration_ms: number;
+        };
+        ProjectDailyTestUsageByEnvironment: {
+            /** @description UTC date (YYYY-MM-DD). */
+            date: string;
+            duration_ms: number;
+            environment_id: number | null;
+            environment_name: string | null;
+        };
+        ProjectGitTokenResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Installation access token. */
+                token: string;
+                /** @description Git host (github.com). */
+                host: string;
+                /** @description Username to use with the token. */
+                username: string;
+            };
+        };
+        ProjectKvGetResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The key read. */
+                key: string;
+                /** @description The stored value, if any. */
+                value?: unknown;
+            };
+        };
+        ProjectKvSetResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The key written. */
+                key: string;
+                /** @description Always true. */
+                success: boolean;
+            };
+        };
+        ProjectListResponse: {
+            /** @description Response payload. */
+            data: {
+                projects: components["schemas"]["Project"][];
+            };
+        };
+        ProjectManagerSessionResponse: {
+            /** @description Response payload. */
+            data: {
+                chat_session: components["schemas"]["ChatSession"];
+                /** @description True when this request created the session, false when it returned the existing one. */
+                created: boolean;
+            };
+        };
+        ProjectMetricsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Chat sessions created in the project in the last 7 days. */
+                sessionsCreated: number;
+                /** @description Chat sessions whose PR was merged in the project in the last 7 days. */
+                sessionsMerged: number;
+                /** @description Tests added across merged sessions in the last 7 days. */
+                testsAdded: number;
+                /** @description Tests modified across merged sessions in the last 7 days. */
+                testsModified: number;
+                /** @description Up to 10 most recently added tests. */
+                recentlyAddedTests?: components["schemas"]["MetricsImpactedTestSummary"][];
+                /** @description Up to 10 most recently modified tests. */
+                recentlyModifiedTests?: components["schemas"]["MetricsImpactedTestSummary"][];
+            };
+        };
+        ProjectOrgResponse: {
+            /** @description Response payload. */
+            data: {
+                org: components["schemas"]["Organisation"];
+            };
+        };
+        ProjectResourceListResponse: {
+            /** @description The page of resources. */
+            data: {
+                resources: components["schemas"]["Resource"][];
+            };
+            pagination: components["schemas"]["Pagination"];
+        };
+        ProjectResourceResponse: {
+            /** @description Response payload. */
+            data: {
+                resource: components["schemas"]["Resource"];
+            };
+        };
+        ProjectResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Project ID. */
+                id: number;
+                /** @description Organisation that owns the project. */
+                org_id: number;
+                /** @description Project display name. */
+                name: string;
+                /** @description Unique project slug. */
+                slug: string;
+                /** @description Repository name. */
+                repo_name: string;
+                /** @description Repository owner. */
+                repo_owner: string;
+                /**
+                 * @description Repository host.
+                 * @enum {string}
+                 */
+                repo_host: "github" | "pierre_code_storage";
+                /** @description Default branch of the repository. */
+                default_branch: string;
+                /** @description Branches that may not be pushed to through Empirical. Always includes the default branch. */
+                protected_branches: string[];
+                /**
+                 * @description Concurrency limit scope for test runs.
+                 * @enum {string}
+                 */
+                test_run_concurrency_limit: "none" | "project" | "environment" | "branch_environment";
+                /**
+                 * @description Behaviour when the concurrency limit is hit.
+                 * @enum {string}
+                 */
+                test_run_concurrency_behavior: "cancel_previous" | "queue_new";
+                /**
+                 * @description Region test runs execute in.
+                 * @enum {string}
+                 */
+                test_run_region: "us-east-1" | "ap-south-1";
+                /** @description Number of shards to split test runs into. */
+                test_run_shards: number | null;
+                /** @description URL of the project profile icon. */
+                profile_icon_url: string | null;
+                /** @description Raw owners.yaml contents. */
+                owners_yaml_raw: string | null;
+                /** @description Whether the repo defines environments.yaml. */
+                has_environments_yaml: boolean | null;
+                /** @description Whether the project is active. */
+                is_active: boolean;
+                /** @description Commit SHA of the last successful test-cases sync. */
+                last_synced_test_cases_commit_sha: string | null;
+                /** @description Error message of the last failed sync, if any. */
+                test_cases_sync_error: string | null;
+                /** @description ISO 8601 timestamp of the last sync error. */
+                test_cases_sync_error_at: string | null;
+            };
+        };
+        ProjectRunnerBackendDetailResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description The backend the project's new runs are placed on, or null for Empirical-hosted. */
+                runner_backend: {
+                    /** @description Runner backend ID. */
+                    id: number;
+                    /** @description Organisation that owns the installation. */
+                    org_id: number;
+                    /** @description Human-readable name. */
+                    name: string;
+                    /** @description AWS account the installation runs in. */
+                    aws_account_id: string;
+                    /** @description AWS region of the installation. */
+                    region: string;
+                    /** @description Role api-worker assumes to drive the plane. */
+                    role_arn: string;
+                    /** @description ECS cluster name. */
+                    cluster_name: string;
+                    /** @description CloudWatch log group of the worker. */
+                    log_group_name: string;
+                    /** @description Worker container name. */
+                    container_name: string;
+                    /** @description Job queue URLs are `${queue_prefix}-${machineSize}`. */
+                    queue_prefix: string;
+                    /**
+                     * @description `pending` until verified; only `active` backends receive runs.
+                     * @enum {string}
+                     */
+                    status: "pending" | "active" | "disabled";
+                    /** @description ISO-8601 time of the last successful verify. */
+                    last_verified_at: string | null;
+                    /** @description ISO-8601 time of the last verify, manual or scheduled, whatever its outcome. */
+                    last_checked_at: string | null;
+                    /** @description Outcome of the last verify; null if never run. */
+                    last_check_ok: boolean | null;
+                    /** @description Every check from the last verify. */
+                    last_check_results: components["schemas"]["RunnerBackendCheck"][] | null;
+                    /** @description ISO-8601 start of the current run of failed checks; null while passing. A failing check does not change `status`. */
+                    check_failing_since: string | null;
+                    /** @description Release of the CloudFormation template the installation runs, as its stack last reported. */
+                    stack_version: string | null;
+                    /** @description ISO-8601 time that release was published, if known. */
+                    stack_released_at: string | null;
+                    /** @description Worker image the installation runs. */
+                    worker_version: string | null;
+                    /** @description Job protocol version the installation speaks. */
+                    protocol_version: string | null;
+                    /** @description Optional features the installation supports. */
+                    capabilities: string[];
+                    /** @description ARN of the CloudFormation stack that registered the installation. */
+                    stack_id: string | null;
+                    /** @description ISO-8601 time the installation's stack first called home; null until then. */
+                    registration_claimed_at: string | null;
+                    /** @description ISO-8601 expiry of the current registration link, if one was minted. Ignored once claimed. */
+                    registration_token_expires_at: string | null;
+                    /** @description ISO-8601 creation time. */
+                    created_at: string;
+                    /** @description ISO-8601 last-update time. */
+                    updated_at: string;
+                } | null;
+            };
+        };
+        ProjectRunnerBackendResponse: {
+            /** @description Response payload. */
+            data: {
+                project_id: number;
+                runner_backend_id: number | null;
+            };
+        };
+        ProjectStaticIpProxyTokenResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Static-IP proxy access token, HMAC signed. */
+                token: string;
+                /** @description Unix seconds at which the token stops being accepted. */
+                expires_at: number;
+            };
+        };
+        ProjectUsageV2Response: {
+            /** @description Response payload. */
+            data: {
+                project_id: number;
+                /** @description Window start actually used (ISO 8601, UTC). */
+                start_date: string;
+                /** @description Window end actually used (ISO 8601, UTC). */
+                end_date: string;
+                ai_usage: {
+                    by_type: components["schemas"]["ProjectAiUsageByType"][];
+                    by_day: components["schemas"]["ProjectDailyAiUsage"][];
+                };
+                test_usage: {
+                    /** @description Sum of all attempt durations for completed non-skipped tests, in milliseconds. */
+                    duration_ms: number;
+                    by_day: components["schemas"]["ProjectDailyTestUsage"][];
+                    by_day_and_environment: components["schemas"]["ProjectDailyTestUsageByEnvironment"][];
+                };
+            };
+        };
+        ProjectWrappedResponse: {
+            /** @description Response payload. */
+            data: {
+                project: components["schemas"]["Project"];
+            };
+        };
+        PutRunManifestRequest: {
+            /** @description Structured scheduled tests. */
+            tests: {
+                /** @description Full test title. */
+                name: string;
+                /** @description Playwright test id, if known. */
+                pw_test_id?: string | null;
+                /** @description Duration (ms) the run worker scheduled this test with, if it had history. */
+                expected_duration_ms?: number | null;
+            }[];
+            /** @description Scheduled dependency groups (serial blocks). */
+            dependency_groups?: {
+                /** @description Stable group id. */
+                id: string;
+                /**
+                 * @description Only Playwright serial groups today.
+                 * @enum {string}
+                 */
+                kind: "playwright_serial";
+                /** @description Members in execution order. */
+                members: {
+                    /** @description Playwright test id of the member. */
+                    test_case_id: string;
+                    /** @description 0-based execution order within the group. */
+                    dependency_order: number;
+                }[];
+            }[];
+            /** @description Zero-based shard index, when the run is sharded. */
+            shard_index?: number;
+            /** @description Total number of shards, when the run is sharded. */
+            total_shards?: number;
+        };
+        RazorpayWebhookAckResponse: {
+            /** @description Acknowledgement. */
+            message: string;
+        };
+        RealtimeUnavailableResponse: {
+            /** @description Reason the realtime service is unavailable. */
+            error: string;
+        };
+        RebuildSandboxSnapshotsByTemplateRequest: {
+            /**
+             * @description Base template whose snapshots to rebuild.
+             * @enum {string}
+             */
+            base_template: "pi-sandbox";
+        };
+        RebuildSandboxSnapshotsRequest: {
+            /**
+             * @description Sandbox provider. Only `e2b` is supported.
+             * @default e2b
+             * @enum {string}
+             */
+            provider: "e2b" | "docker" | "vercel";
+            /**
+             * @description Base template whose snapshots to rebuild.
+             * @enum {string}
+             */
+            base_template: "pi-sandbox";
+            /** @description Only rebuild these projects. Projects without a snapshot for the template are skipped. */
+            project_ids?: number[];
+        };
+        RecentBranch: {
+            /** @description Branch name. */
+            name: string;
+            /** @description ID of the latest test run on the branch. */
+            latest_run_id: number;
+            /** @description ISO 8601 timestamp of the latest run. */
+            latest_run_date: string | null;
+            /** @description Head commit SHA of the latest run. */
+            latest_commit_sha: string | null;
+            /** @description Number of runs in the window. */
+            run_count: number;
+            /** @description GitHub actor of the latest run. */
+            latest_github_actor: string | null;
+        };
+        RecentPage: {
+            page_id: string;
+            project_id: number | null;
+            path: string | null;
+            title: string | null;
+            viewed_at: string;
+        };
+        RecentPagesResponse: {
+            /** @description Response payload. */
+            data: {
+                recent_pages: components["schemas"]["RecentPage"][];
+            };
+        };
+        RecordRecentPageRequest: {
+            /** @description Stable dashboard page ID. */
+            page_id: string;
+            /** @description Project for a project-scoped page; null for global pages. */
+            project_id?: number | null;
+            /** @description Exact project-relative pathname, or absolute pathname for a global page. */
+            path?: string;
+            /** @description Current document title for this exact destination. */
+            title?: string;
+        };
+        RecordRecentPageResponse: {
+            /** @description Response payload. */
+            data: {
+                recent_page: components["schemas"]["RecentPage"];
+            };
+        };
+        RemoveMemberResponse: {
+            /** @description Response payload. */
+            data: {
+                removed: boolean;
+            };
+        };
+        RemoveRunnerBackendResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @enum {boolean} */
+                removed: true;
+            };
+        };
+        RenameBranchResponse: {
+            /** @description Always true. */
+            success: boolean;
+            /** @description Human-readable result. */
+            message: string;
+        };
+        RenameRunnerBackendBody: {
+            /** @description Name shown for the runner in Empirical. */
+            name: string;
+        };
+        ReplaceInvoiceBillingLinesRequest: {
+            billing_lines: {
+                period_month?: string | null;
+                fx_rate?: number | null;
+                /** @enum {string} */
+                kind?: "tier" | "addon";
+                project_id?: number | null;
+                plan_id?: number | null;
+                tier?: string | null;
+                label?: string | null;
+                base_price_cents: number;
+                currency?: string;
+                meters: {
+                    meter: string;
+                    included_qty?: number | null;
+                    billed_overage_qty?: number | null;
+                    overage_price_cents?: number | null;
+                }[];
+            }[];
+        };
+        RepoExistsErrorResponse: {
+            /** @description Error message. */
+            error: string;
+            /** @description Existence (false) on error. */
+            data: {
+                exists: boolean;
+            };
+        };
+        RepoExistsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether the repository exists. */
+                exists: boolean;
+            };
+        };
+        RepoSettingsCheck: {
+            /** @description Stable check id. */
+            id: string;
+            /**
+             * @description `error`: Empirical breaks without it. `warning`: recommended. `info`: for awareness.
+             * @enum {string}
+             */
+            level: "error" | "warning" | "info";
+            /**
+             * @description `unknown` when GitHub didn't let the Empirical app read what the check needs.
+             * @enum {string}
+             */
+            status: "pass" | "fail" | "unknown";
+            /** @description What was found, e.g. "Squash merging is on". Worded the same way whether the check passes or fails. */
+            title: string;
+            /** @description Why it matters, or what couldn't be read. */
+            detail: string;
+            /** @description Where to change it in GitHub, in plain language. */
+            fix_hint: string | null;
+        };
+        RepoSettingsCheckResponse: {
+            /** @description Response payload. */
+            data: {
+                repo: {
+                    owner: string;
+                    name: string;
+                    html_url: string;
+                };
+                checks: components["schemas"]["RepoSettingsCheck"][];
+                /** @description True when the repo is owned by empirical-run and its merge settings need fixing; `POST …/fix` then applies them. */
+                can_auto_fix: boolean;
+            };
         };
         RepoTransfer: {
             /** @description Repo transfer ID. */
@@ -6707,49 +12236,6 @@ export interface components {
             /** @description ISO 8601 last-update timestamp. */
             updated_at: string | null;
         };
-        RepoTransferError: {
-            /** @description Human-readable error message. */
-            error: string;
-        };
-        RepoTransferResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Repo transfer ID. */
-                id: number;
-                /** @description ID of the project being transferred. */
-                project_id: number;
-                /** @description ID of the org that owns the project. */
-                org_id: number;
-                /** @description Current GitHub org/owner of the repo. */
-                source_repo_owner: string;
-                /** @description Current repository name. */
-                source_repo_name: string;
-                /** @description Destination GitHub org/owner. */
-                target_repo_owner: string;
-                /** @description Destination repository name. */
-                target_repo_name: string;
-                /**
-                 * @description Current status of the transfer.
-                 * @enum {string}
-                 */
-                status: "pending" | "mirroring" | "flipping" | "done" | "failed";
-                /** @description Completion percentage (0-100). */
-                progress_percent: number;
-                /** @description Human-readable progress message, if any. */
-                progress_message: string | null;
-                /** @description Error message when the transfer failed. */
-                error_message: string | null;
-                /** @description ISO 8601 timestamp the transfer started. */
-                started_at: string | null;
-                /** @description ISO 8601 timestamp the transfer completed. */
-                completed_at: string | null;
-                /** @description ISO 8601 creation timestamp. */
-                created_at: string | null;
-                /** @description ISO 8601 last-update timestamp. */
-                updated_at: string | null;
-            };
-        };
-        StartRepoTransferBadRequest: components["schemas"]["RepoTransferCodedError"] | components["schemas"]["ErrorResponse"];
         RepoTransferCodedError: {
             /** @description Human-readable error message. */
             error: string;
@@ -6796,1212 +12282,130 @@ export interface components {
                 updated_at: string | null;
             };
         };
-        StartRepoTransferRequest: {
-            /** @description GitHub org/owner to transfer the repo to. */
-            target_repo_owner: string;
-            /** @description Repository name at the target owner. */
-            target_repo_name: string;
+        RepoTransferError: {
+            /** @description Human-readable error message. */
+            error: string;
         };
-        RecentPagesResponse: {
+        RepoTransferListResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["RepoTransfer"][];
+        };
+        RepoTransferResponse: {
             /** @description Response payload. */
             data: {
-                recent_pages: components["schemas"]["RecentPage"][];
+                /** @description Repo transfer ID. */
+                id: number;
+                /** @description ID of the project being transferred. */
+                project_id: number;
+                /** @description ID of the org that owns the project. */
+                org_id: number;
+                /** @description Current GitHub org/owner of the repo. */
+                source_repo_owner: string;
+                /** @description Current repository name. */
+                source_repo_name: string;
+                /** @description Destination GitHub org/owner. */
+                target_repo_owner: string;
+                /** @description Destination repository name. */
+                target_repo_name: string;
+                /**
+                 * @description Current status of the transfer.
+                 * @enum {string}
+                 */
+                status: "pending" | "mirroring" | "flipping" | "done" | "failed";
+                /** @description Completion percentage (0-100). */
+                progress_percent: number;
+                /** @description Human-readable progress message, if any. */
+                progress_message: string | null;
+                /** @description Error message when the transfer failed. */
+                error_message: string | null;
+                /** @description ISO 8601 timestamp the transfer started. */
+                started_at: string | null;
+                /** @description ISO 8601 timestamp the transfer completed. */
+                completed_at: string | null;
+                /** @description ISO 8601 creation timestamp. */
+                created_at: string | null;
+                /** @description ISO 8601 last-update timestamp. */
+                updated_at: string | null;
             };
         };
-        RecentPage: {
-            page_id: string;
-            project_id: number | null;
-            path: string | null;
-            title: string | null;
-            viewed_at: string;
-        };
-        RecordRecentPageResponse: {
-            /** @description Response payload. */
-            data: {
-                recent_page: components["schemas"]["RecentPage"];
-            };
-        };
-        RecordRecentPageRequest: {
-            /** @description Stable dashboard page ID. */
-            page_id: string;
-            /** @description Project for a project-scoped page; null for global pages. */
-            project_id?: number | null;
-            /** @description Exact project-relative pathname, or absolute pathname for a global page. */
-            path?: string;
-            /** @description Current document title for this exact destination. */
-            title?: string;
-        };
-        OrgListResponse: {
-            /** @description Response payload. */
-            data: {
-                orgs: components["schemas"]["OrganizationWithProjects"][];
-            };
-        };
-        OrganizationWithProjects: {
-            /** @description Organization ID. */
+        ReporterSlackChannel: {
+            /** @description Registered channel id, as used in `slack_channel_ids` of a reporter config. */
             id: number;
-            /** @description Organization display name. */
-            name: string;
-            /** @description Email domains that map users to this org. */
-            email_domains: string[];
-            /** @description Creation timestamp (ISO 8601). */
-            created_at: string | null;
-            /** @description Last update timestamp (ISO 8601). */
-            updated_at: string | null;
-            /** @description User/system id that last updated the org. */
-            updated_by: string | null;
-            /** @description Recipients for billing communication. */
-            billing_emails: string[];
-            /** @description Billing currency (e.g. `usd`, `inr`). */
-            billing_currency: string;
-            /** @description Deposit bank account key. */
-            deposit_bank_key: string;
-            /** @description Legal billing name. */
-            billing_name: string | null;
-            /** @description Billing address. */
-            billing_address_lines: string | null;
-            /** @description GSTIN. */
-            billing_gstin: string | null;
-            /** @description Place of supply. */
-            place_of_supply: string | null;
-            /** @description Payment terms in days. */
-            payment_terms_days: number | null;
-            /** @description Projects belonging to the organization. */
-            projects: components["schemas"]["OrgProject"][];
+            /** @description Slack channel id (`C…`), as used in `slack_channels` of a reporter config. */
+            channel_id: string;
+            /** @description Channel name without the `#`, if known. */
+            name: string | null;
         };
-        OrgProject: {
-            /** @description Project ID. */
-            id: number;
-            /** @description Owning organization ID. */
-            org_id: number;
-            /** @description Project display name. */
-            name: string;
-            /** @description URL slug for the project. */
-            slug: string;
-            /** @description Backing repository name. */
-            repo_name: string;
-            /** @description Repository owner/org. */
-            repo_owner: string;
-            /**
-             * @description Repository host.
-             * @enum {string}
-             */
-            repo_host: "github" | "pierre_code_storage";
-            /** @description Default branch name. */
-            default_branch: string;
-            /** @description Whether email reporting is enabled. */
-            has_email_reporting: boolean | null;
-            /**
-             * @description Concurrency scope for test runs.
-             * @enum {string}
-             */
-            test_run_concurrency_limit: "none" | "project" | "environment" | "branch_environment";
-            /**
-             * @description Behavior when the concurrency limit is hit.
-             * @enum {string}
-             */
-            test_run_concurrency_behavior: "cancel_previous" | "queue_new";
-            /**
-             * @description Region test runs execute in.
-             * @enum {string}
-             */
-            test_run_region: "us-east-1" | "ap-south-1";
-            /** @description Fixed shard count, if configured. */
-            test_run_shards: number | null;
-            /** @description Project icon URL. */
-            profile_icon_url: string | null;
-            /** @description Raw owners.yaml contents. */
-            owners_yaml_raw: string | null;
-            /** @description Whether the repo defines environments.yaml. */
-            has_environments_yaml: boolean | null;
-            /** @description Whether the project is active. */
-            is_active: boolean;
-            /** @description Commit SHA of the last test-case sync. */
-            last_synced_test_cases_commit_sha: string | null;
-            /** @description Last test-case sync error, if any. */
-            test_cases_sync_error: string | null;
-            /** @description When the last sync error occurred (ISO 8601). */
-            test_cases_sync_error_at: string | null;
+        RequestIngestionProviderPayload: {
+            [key: string]: unknown;
         };
-        OrgsByEmailDomainResponse: {
-            /** @description Response payload. */
-            data: {
-                organisations: {
-                    /** @description Organization ID. */
-                    id: number;
-                    /** @description Organization name. */
-                    name: string;
-                }[];
+        RequestIngestionWebhook: {
+            /** @description Raw provider webhook payload (JSON object). */
+            payload: {
+                [key: string]: unknown;
             };
+            /** @description Raw request body, used for signature validation. */
+            body: string;
+            /** @description Provider signature header for the delivery. */
+            signature?: string | null;
         };
-        ResolveMembershipResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description All org ids the user now belongs to via invites and domain match. */
-                org_ids: number[];
-            };
+        RerunTestRunRequest: {
+            /** @description When true, re-run only the failed tests from the source run. The source run must be completed. */
+            only_failed?: boolean;
+            /** @description Reporters for the re-run, in the same shape as on trigger. Defaults to the source run's reporters. */
+            reporters?: ({
+                /**
+                 * @description Posts run status updates to Slack channels.
+                 * @enum {string}
+                 */
+                reporter_type: "slack_run_status";
+                /** @description Slack channel ids (`C…`), as shown in Slack's channel details. Shared (Slack Connect) channels have the same id in every workspace. Each must be a registered, unarchived channel of the project's organization. */
+                slack_channels?: string[];
+                /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`). Can be combined with `slack_channels`. */
+                slack_channel_ids?: number[];
+            } | {
+                /**
+                 * @description Posts a GitHub check run on the build commit. Needs `build` with a repository the GitHub Reporter app is installed on.
+                 * @enum {string}
+                 */
+                reporter_type: "github_check";
+            } | {
+                /**
+                 * @description Posts (and updates) a comment on the pull request for the build branch. Needs `build` with a repository the GitHub Reporter app is installed on.
+                 * @enum {string}
+                 */
+                reporter_type: "github_pr_comment";
+            } | {
+                /**
+                 * @description Emails a report when the run ends to every user whose email domain is one of the organization's email domains.
+                 * @enum {string}
+                 */
+                reporter_type: "email_run_report";
+            } | {
+                /**
+                 * @description Sends a Slack DM to whoever started the run (from the dashboard, the CLI or an agent session) when it ends, if their Slack account is linked. Runs triggered with a project API key have no one to DM.
+                 * @enum {string}
+                 */
+                reporter_type: "slack_creator_dm";
+            })[];
         };
         ResolveMembershipRequest: {
             /**
              * Format: email
-             * @description Verified email of the user.
+             * @description Verified email of the user. Required for system callers; ignored for a signed-in user, whose confirmed email is read server-side.
              */
-            email: string;
-            /** @description Supabase user id to grant membership to. */
-            user_id: string;
+            email?: string;
+            /** @description Supabase user id to grant membership to. Required for system callers; ignored for a signed-in user, who resolves their own. */
+            user_id?: string;
         };
-        OrgUpdateResponse: {
+        ResolveMembershipResponse: {
             /** @description Response payload. */
             data: {
-                org: components["schemas"]["Organization"];
+                /** @description All org ids the user belongs to after resolution. */
+                org_ids: number[];
+                /** @description Whether the user is a super admin. */
+                is_super_admin: boolean;
             };
-        };
-        Organization: {
-            /** @description Organization ID. */
-            id: number;
-            /** @description Organization display name. */
-            name: string;
-            /** @description Email domains that map users to this org. */
-            email_domains: string[];
-            /** @description Creation timestamp (ISO 8601). */
-            created_at: string | null;
-            /** @description Last update timestamp (ISO 8601). */
-            updated_at: string | null;
-            /** @description User/system id that last updated the org. */
-            updated_by: string | null;
-            /** @description Recipients for billing communication. */
-            billing_emails: string[];
-            /** @description Billing currency (e.g. `usd`, `inr`). */
-            billing_currency: string;
-            /** @description Deposit bank account key. */
-            deposit_bank_key: string;
-            /** @description Legal billing name. */
-            billing_name: string | null;
-            /** @description Billing address. */
-            billing_address_lines: string | null;
-            /** @description GSTIN. */
-            billing_gstin: string | null;
-            /** @description Place of supply. */
-            place_of_supply: string | null;
-            /** @description Payment terms in days. */
-            payment_terms_days: number | null;
-        } | null;
-        OrgUpdateRequest: {
-            /** @description Organization display name. */
-            name?: string;
-            /** @description Email domains that map users to this org. */
-            email_domains?: string[];
-            /** @description Recipients for billing communication. */
-            billing_emails?: string[];
-            /** @description Billing currency (e.g. `usd`, `inr`). */
-            billing_currency?: string;
-            /** @description Deposit bank account key. */
-            deposit_bank_key?: string;
-            /** @description Legal billing name, or `null` to clear. */
-            billing_name?: string | null;
-            /** @description Billing address, or `null` to clear. */
-            billing_address_lines?: string | null;
-            /** @description GSTIN, or `null` to clear. */
-            billing_gstin?: string | null;
-            /** @description Place of supply, or `null` to clear. */
-            place_of_supply?: string | null;
-            /** @description Payment terms in days, or `null` to clear. */
-            payment_terms_days?: number | null;
-        };
-        OrgMembersResponse: {
-            /** @description The page of org members. */
-            data: {
-                members: components["schemas"]["OrgMember"][];
-            };
-            pagination: components["schemas"]["Pagination"];
-        };
-        OrgMember: {
-            /** @description User ID. */
-            id: string;
-            /** @description User email address. */
-            email: string;
-            /** @description Display name (falls back to email). */
-            name: string;
-            /** @description Avatar URL (may be empty). */
-            picture: string;
-            /** @description Account creation timestamp (ISO 8601). */
-            created_at: string | null;
-            /** @description Last sign-in timestamp (ISO 8601). */
-            last_sign_in_at: string | null;
-        };
-        OrgInviteResponse: {
-            /** @description Response payload. */
-            data: {
-                invite: components["schemas"]["OrgInvite"];
-                /** @description Whether the invite email was delivered. */
-                email_sent: boolean;
-            };
-        };
-        OrgInvite: {
-            /** @description Invite ID. */
-            id: number;
-            /** @description Organization ID. */
-            org_id: number;
-            /** @description Invited email (lowercased). */
-            email: string;
-            /** @description User id of the inviting member. */
-            invited_by: string;
-            /**
-             * @description Invite lifecycle status.
-             * @enum {string}
-             */
-            status: "pending" | "accepted" | "revoked";
-            /** @description Creation timestamp (ISO 8601). */
-            created_at: string;
-            /** @description Acceptance timestamp (ISO 8601), if accepted. */
-            accepted_at: string | null;
-        };
-        CreateOrgInviteRequest: {
-            /**
-             * Format: email
-             * @description Email address to invite.
-             */
-            email: string;
-        };
-        OrgInviteListResponse: {
-            /** @description Response payload. */
-            data: {
-                invites: components["schemas"]["OrgInvite"][];
-            };
-        };
-        OrgInviteRevokeResponse: {
-            /** @description Response payload. */
-            data: {
-                invite: components["schemas"]["OrgInvite"];
-            };
-        };
-        RemoveMemberResponse: {
-            /** @description Response payload. */
-            data: {
-                removed: boolean;
-            };
-        };
-        OnboardingContextResponse: {
-            /** @description Response payload. */
-            data: {
-                invites: {
-                    /** @description Invite ID. */
-                    id: number;
-                    /** @description Organisation ID. */
-                    org_id: number;
-                    /** @description Organisation name. */
-                    org_name: string;
-                }[];
-                /** @description The caller's verified email. */
-                email: string;
-                /** @description Domain of the caller's email (may be empty). */
-                email_domain: string;
-                /** @description Whether the caller's email domain can be offered for auto-join (false for public providers like gmail.com). */
-                domain_join_available: boolean;
-            };
-        };
-        OnboardingCompleteResponse: {
-            /** @description Response payload. */
-            data: {
-                org: {
-                    /** @description Organisation ID. */
-                    id: number;
-                    /** @description Organisation name. */
-                    name: string;
-                    /** @description Auto-join email domains on the org. */
-                    email_domains: string[];
-                };
-                project: {
-                    /** @description Project ID. */
-                    id: number;
-                    /** @description Project name. */
-                    name: string;
-                    /** @description Project slug. */
-                    slug: string;
-                    /** @description Backing repository name. */
-                    repo_name: string;
-                };
-                /** @description Whether the GitHub repo was created. When false the project exists but repo provisioning failed and needs a retry. */
-                repo_created: boolean;
-            };
-        };
-        OnboardingCompleteRequest: {
-            /** @description Existing organisation to add the project to. */
-            org_id?: number;
-            /** @description Name of a new organisation to create. */
-            org_name?: string;
-            /** @description When creating a new org, let anyone with the caller's (non-public) email domain auto-join it on sign-in. The domain is derived server-side from the caller's verified email; it is never accepted as input. Ignored when `org_id` is given. */
-            allow_domain_join?: boolean;
-            /** @description Display name of the project. */
-            project_name: string;
-            /** @description URL slug for the project. */
-            project_slug: string;
-        };
-        SnoozeListResponse: {
-            /** @description The page of snoozes. */
-            data: {
-                snoozes: components["schemas"]["Snooze"][];
-            };
-            pagination: components["schemas"]["Pagination"];
-        };
-        Snooze: {
-            /** @description Unique identifier for the snooze. */
-            id: number;
-            /** @description Array of Playwright test IDs (41-character hashes) that are snoozed. */
-            test_ids: string[];
-            /** @description ISO 8601 timestamp for when the snooze expires. Active when in the future. */
-            snooze_until: string;
-            /** @description Description of why the tests are snoozed. */
-            description: string | null;
-            /** @description ID of the test run that triggered the snooze creation, if applicable. */
-            created_from_test_run_id: number | null;
-            /** @description User ID of the creator. Set automatically for dashboard users; `null` for API-created snoozes. */
-            created_by: string | null;
-            /** @description ISO 8601 timestamp of when the snooze was created. */
-            created_at: string;
-            /** @description ISO 8601 timestamp of when the snooze was last updated. */
-            updated_at: string;
-            /** @description Environment ID this snooze is scoped to. `null` if it applies to all environments. */
-            scoped_to_environment_id: number | null;
-        };
-        SnoozeResponse: {
-            /** @description Response payload. */
-            data: {
-                snooze: components["schemas"]["Snooze"];
-            };
-        };
-        CreateSnoozeRequest: {
-            /** @description Array of Playwright test IDs (41-character hashes) to snooze. */
-            test_ids: string[];
-            /** @description ISO 8601 timestamp for when the snooze should expire. */
-            snooze_until: string;
-            /** @description Optional description explaining why the tests are being snoozed. */
-            description?: string;
-            /** @description Optional user identifier for the snooze creator. Set automatically for dashboard users. */
-            created_by?: string;
-            /** @description Environment ID to scope the snooze to. If omitted, applies to all environments. */
-            scoped_to_environment_id?: number;
-            /** @description ID of the test run this snooze was created from, if applicable. */
-            created_from_test_run_id?: string | number;
-        };
-        UpdateSnoozeRequest: {
-            /** @description ISO 8601 timestamp for when the snooze should expire. */
-            snooze_until?: string;
-            /** @description Description, or `null` to clear it. */
-            description?: string | null;
-            /** @description Set to `true` to immediately expire the snooze. */
-            expire_now?: boolean;
-            /** @description Environment ID to scope the snooze to. Set to `null` to apply to all environments. */
-            scoped_to_environment_id?: number | null;
-            /** @description Updated array of Playwright test IDs to snooze. */
-            test_ids?: string[];
-        };
-        AddSnoozeTestCasesRequest: {
-            /** @description Playwright test IDs to add to the snooze. */
-            test_ids: string[];
-        };
-        FlagsResponse: {
-            /** @description Response payload. */
-            data: {
-                [key: string]: boolean | string;
-            };
-        };
-        RequestListResponse: {
-            /** @description The page of requests. */
-            data: {
-                requests: components["schemas"]["RequestWithUser"][];
-            };
-            pagination: components["schemas"]["Pagination"];
-        };
-        RequestWithUser: {
-            /** @description Request ID. */
-            id: number;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description Supabase user ID of the creator, if known. */
-            created_by: string | null;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-            /** @description Project the request belongs to. */
-            project_id: number;
-            /** @description Origin of the request (e.g. `linear`). */
-            source: string;
-            /** @description External identifier for the request in its source system. */
-            source_identifier: string;
-            /** @description Request title. */
-            title: string;
-            /** @description Request description. */
-            description: string;
-            /**
-             * @description Request status.
-             * @enum {string}
-             */
-            status: "draft" | "open" | "in-review" | "closed" | "resolved";
-            /** @description Resolved details for the creating user, if available. */
-            created_by_user_detail?: {
-                /** @description Supabase user ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description Display name. */
-                name: string;
-                /** @description Avatar URL. */
-                picture: string;
-            } | null;
-        };
-        CreateRequestResponse: {
-            /** @description Response payload. */
-            data: {
-                request: components["schemas"]["Request"];
-                /** @description Chat session created for non-draft requests, else null. */
-                session: {
-                    /** @description Chat session ID. */
-                    id: number;
-                    /** @description Session title, if generated. */
-                    title: string | null;
-                    /** @description Supabase user ID of the creator. */
-                    created_by: string | null;
-                    /** @description ISO 8601 creation timestamp. */
-                    created_at: string;
-                    /** @description ISO 8601 last-update timestamp. */
-                    updated_at: string;
-                    /** @description Project ID. */
-                    project_id: number;
-                    /** @description Branch this session forks. */
-                    base_branch: string;
-                    /** @description Session mode (e.g. `chat`). */
-                    mode: string;
-                    /** @description Source surface (e.g. `request`). */
-                    source: string;
-                    /** @description Identifier tying the session to its source. */
-                    source_identifier: string;
-                    /** @description Model used for the session. */
-                    model: string | null;
-                    /** @description Opaque agent chat state. */
-                    chat_state?: unknown;
-                    /** @description Tests impacted by the session. */
-                    impacted_tests: unknown[];
-                    /** @description Whether the agent is awaiting user input. */
-                    ask_user_for_input: boolean | null;
-                    /** @description Langfuse trace ID for observability. */
-                    langfuse_trace_id: string | null;
-                    /** @description Whether the session is closed. */
-                    is_closed: boolean;
-                    /** @description Feature flags active for this session. */
-                    feature_flags: string[];
-                    /** @description Outboxed first message awaiting delivery. */
-                    pending_first_message?: unknown;
-                } | null;
-            };
-        };
-        Request: {
-            /** @description Request ID. */
-            id: number;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description Supabase user ID of the creator, if known. */
-            created_by: string | null;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-            /** @description Project the request belongs to. */
-            project_id: number;
-            /** @description Origin of the request (e.g. `linear`). */
-            source: string;
-            /** @description External identifier for the request in its source system. */
-            source_identifier: string;
-            /** @description Request title. */
-            title: string;
-            /** @description Request description. */
-            description: string;
-            /**
-             * @description Request status.
-             * @enum {string}
-             */
-            status: "draft" | "open" | "in-review" | "closed" | "resolved";
-        };
-        CreateRequestError: {
-            /** @description Always null for error responses. */
-            data: unknown;
-            /** @description Error details. */
-            error: {
-                /** @description Human-readable error message. */
-                message: string;
-                /** @description Required fields that were missing or empty. */
-                missingFields?: string[];
-            };
-        };
-        RequestResponse: {
-            /** @description Response payload. */
-            data: {
-                request: components["schemas"]["RequestWithUser"];
-            };
-        };
-        UpdatedRequestResponse: {
-            /** @description Response payload. */
-            data: {
-                request: components["schemas"]["Request"];
-            };
-        };
-        DeletedRequestResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The deleted request. */
-                request: {
-                    /** @description Deleted request ID. */
-                    id: number;
-                };
-            };
-        };
-        RequestChatSessionsResponse: {
-            /** @description Null when no sessions exist. */
-            data: unknown;
-            /** @description Explanatory message when empty. */
-            message: string;
-        } | {
-            /** @description Chat sessions for the request. */
-            data: components["schemas"]["RequestChatSessionWithUser"][];
-        };
-        RequestChatSessionWithUser: {
-            /** @description Chat session ID. */
-            id: number;
-            /** @description Session title, if generated. */
-            title: string | null;
-            /** @description Supabase user ID of the creator. */
-            created_by: string | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-            /** @description Project ID. */
-            project_id: number;
-            /** @description Branch this session forks. */
-            base_branch: string;
-            /** @description Session mode (e.g. `chat`). */
-            mode: string;
-            /** @description Source surface (e.g. `request`). */
-            source: string;
-            /** @description Identifier tying the session to its source. */
-            source_identifier: string;
-            /** @description Model used for the session. */
-            model: string | null;
-            /** @description Opaque agent chat state. */
-            chat_state?: unknown;
-            /** @description Tests impacted by the session. */
-            impacted_tests: unknown[];
-            /** @description Whether the agent is awaiting user input. */
-            ask_user_for_input: boolean | null;
-            /** @description Langfuse trace ID for observability. */
-            langfuse_trace_id: string | null;
-            /** @description Whether the session is closed. */
-            is_closed: boolean;
-            /** @description Feature flags active for this session. */
-            feature_flags: string[];
-            /** @description Outboxed first message awaiting delivery. */
-            pending_first_message?: unknown;
-            /** @description Resolved details for the creating user, if available. */
-            created_by_user_detail?: {
-                /** @description Supabase user ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description Display name. */
-                name: string;
-                /** @description Avatar URL. */
-                picture: string;
-            } | null;
-        };
-        RequestSessionResponse: {
-            /** @description Response payload. */
-            data: {
-                chat_session: components["schemas"]["RequestChatSession"];
-            };
-        };
-        RequestChatSession: {
-            /** @description Chat session ID. */
-            id: number;
-            /** @description Session title, if generated. */
-            title: string | null;
-            /** @description Supabase user ID of the creator. */
-            created_by: string | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-            /** @description Project ID. */
-            project_id: number;
-            /** @description Branch this session forks. */
-            base_branch: string;
-            /** @description Session mode (e.g. `chat`). */
-            mode: string;
-            /** @description Source surface (e.g. `request`). */
-            source: string;
-            /** @description Identifier tying the session to its source. */
-            source_identifier: string;
-            /** @description Model used for the session. */
-            model: string | null;
-            /** @description Opaque agent chat state. */
-            chat_state?: unknown;
-            /** @description Tests impacted by the session. */
-            impacted_tests: unknown[];
-            /** @description Whether the agent is awaiting user input. */
-            ask_user_for_input: boolean | null;
-            /** @description Langfuse trace ID for observability. */
-            langfuse_trace_id: string | null;
-            /** @description Whether the session is closed. */
-            is_closed: boolean;
-            /** @description Feature flags active for this session. */
-            feature_flags: string[];
-            /** @description Outboxed first message awaiting delivery. */
-            pending_first_message?: unknown;
-        };
-        ReporterTypesResponse: {
-            /** @description Response payload. */
-            data: {
-                reporter_types: {
-                    /** @enum {string} */
-                    id: "slack_run_status" | "slack_creator_dm" | "email_run_report" | "github_check" | "github_pr_comment";
-                    display_name: string;
-                    /** @enum {string} */
-                    audience: "broadcast" | "initiator";
-                    recipient: {
-                        /** @enum {string} */
-                        mode: "destinations" | "selector";
-                        supported_destination_kinds: ("slack_channel" | "slack_user" | "email" | "github_repository")[];
-                        supported_selectors: "run_creator"[];
-                    };
-                    supported_events: ("run_queued" | "run_started" | "run_progress" | "run_ended" | "run_cancelled" | "run_interrupted" | "run_error")[];
-                    inbound_replies: {
-                        /** @enum {string} */
-                        availability: "unavailable" | "planned" | "available";
-                        supported_policies: ("disabled" | "bot_mention" | "configured_recipients" | "org_members")[];
-                    };
-                }[];
-            };
-        };
-        ListProjectAddonsResponse: {
-            /** @description Response payload. */
-            data: {
-                addons: components["schemas"]["ProjectAddonState"][];
-                /** @description Every period for this project, newest first. */
-                history: components["schemas"]["ProjectAddonPeriod"][];
-            };
-        };
-        ProjectAddonState: {
-            /**
-             * @description Add-on identifier.
-             * @enum {string}
-             */
-            key: "static_ip_proxy" | "repo_ownership";
-            name: string;
-            description: string;
-            /** @description Copy for the enable-confirmation dialog. Null when the add-on has nothing to warn about. */
-            billing_note: string | null;
-            /** @description True when there is an open period for this add-on. */
-            enabled: boolean;
-            /** @description effective_from of the open period, or null when disabled. */
-            active_since: string | null;
-        };
-        ProjectAddonPeriod: {
-            id: number;
-            /**
-             * @description Add-on identifier.
-             * @enum {string}
-             */
-            addon: "static_ip_proxy" | "repo_ownership";
-            /** @description ISO timestamp the add-on became active. */
-            effective_from: string;
-            /** @description ISO timestamp it was turned off; null while active. */
-            effective_to: string | null;
-            /** @description Order-form line this period bills against, when a priced line exists. Null for add-ons that are free today. */
-            order_form_line_id: number | null;
-            created_by: string | null;
-            ended_by: string | null;
-        };
-        ProjectAddonResponse: {
-            /** @description Response payload. */
-            data: {
-                addon: components["schemas"]["ProjectAddonPeriod"];
-            };
-        };
-        EnableProjectAddonRequest: {
-            /**
-             * Format: date-time
-             * @description Backdate the period to this ISO timestamp. Super admin only; defaults to now.
-             */
-            effective_from?: string;
-            /** @description Order-form line (kind='addon') this period bills against. Super admin only. */
-            order_form_line_id?: number;
-        };
-        StaticIpsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description AWS region of the proxy fleet. */
-                region: string;
-                /** @description Human-readable location. */
-                location: string;
-                /** @description Proxy endpoint to point Playwright's proxy config at. */
-                endpoint: string;
-                /** @description Egress IPs to allowlist. One per proxy instance. */
-                ips: string[];
-            };
-        };
-        SandboxSnapshotListResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Snapshots for the project, newest first. */
-                snapshots: components["schemas"]["SandboxSnapshot"][];
-            };
-        };
-        SandboxSnapshot: {
-            /** @description Snapshot row ID. */
-            id: number;
-            /** @description Project the snapshot belongs to, or null. */
-            project_id: number | null;
-            /** @description Sandbox provider (e.g. `e2b`). */
-            provider: string;
-            /** @description Snapshot source identifier. */
-            source_name: string;
-            /** @description Playwright version the snapshot was built with. */
-            playwright_version: string;
-            /** @description Hash of the package lockfile, if known. */
-            package_lock_hash: string | null;
-            /** @description Base branch the snapshot was built from. */
-            base_branch: string | null;
-            /** @description Base template the snapshot was built from. */
-            base_template: string | null;
-            /** @description Head commit SHA the snapshot was built from. */
-            head_sha: string | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-        };
-        SandboxSnapshotTriggeredResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether snapshot creation was enqueued. */
-                triggered: boolean;
-            };
-        };
-        CreateSandboxSnapshotRequest: {
-            /**
-             * @description Base template to snapshot for the project.
-             * @enum {string}
-             */
-            base_template: "pi-sandbox";
-        };
-        SandboxSnapshotRebuildResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether rebuilds were enqueued. */
-                triggered: boolean;
-                /** @description Number of projects scheduled for rebuild. */
-                project_count: number;
-            };
-        };
-        RebuildSandboxSnapshotsRequest: {
-            /**
-             * @description Sandbox provider. Only `e2b` is supported.
-             * @default e2b
-             * @enum {string}
-             */
-            provider: "e2b" | "docker" | "vercel";
-            /**
-             * @description Base template whose snapshots to rebuild.
-             * @enum {string}
-             */
-            base_template: "pi-sandbox";
-        };
-        RebuildSandboxSnapshotsByTemplateRequest: {
-            /**
-             * @description Base template whose snapshots to rebuild.
-             * @enum {string}
-             */
-            base_template: "pi-sandbox";
-        };
-        SandboxSnapshotSourcesUpsertResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Number of sources upserted. */
-                source_count: number;
-                /** @description The upserted snapshot source rows. */
-                sources: (components["schemas"]["SandboxSnapshot"] & unknown)[];
-            };
-        };
-        UpsertSandboxSnapshotSourcesRequest: {
-            /** @description Snapshot sources to upsert (at least one). */
-            sources: {
-                /** @description Project the source belongs to, or null if generic. */
-                project_id: number | null;
-                /**
-                 * @description Sandbox provider.
-                 * @enum {string}
-                 */
-                provider: "e2b" | "docker" | "vercel";
-                /** @description Snapshot source identifier (e.g. template ID). */
-                source_name: string;
-                /** @description Playwright version the snapshot was built with. */
-                playwright_version: string;
-                /** @description Base template the source was built from. */
-                base_template: string;
-                /** @description Hash of the package lockfile, if known. */
-                package_lock_hash?: string | null;
-                /** @description Base branch the snapshot was built from, if known. */
-                base_branch?: string | null;
-                /** @description Head commit SHA the snapshot was built from. */
-                head_sha?: string | null;
-            }[];
-        };
-        ListEnvironmentsResponse: {
-            /** @description Response payload. */
-            data: {
-                environments: components["schemas"]["Environment"][];
-            };
-        };
-        Environment: {
-            /** @description Unique identifier. */
-            id: number;
-            /** @description Project identifier. */
-            project_id: number;
-            /** @description URL-friendly identifier. */
-            slug: string;
-            /** @description Display name. */
-            name: string;
-            /** @description Playwright project names to match. */
-            playwright_projects_match: string[];
-            /** @description Playwright project names to ignore. */
-            playwright_projects_ignore: string[];
-            /** @description Whether the environment is disabled. */
-            is_disabled: boolean | null;
-            /** @description Environment file paths. */
-            env_files: string[];
-            /** @description Cron expression for scheduled triggers. */
-            scheduled_trigger: string | null;
-            /** @description Concurrency group and policy scheduled runs are triggered with; null uses the project's legacy concurrency setting. */
-            scheduled_concurrency: {
-                /** @description Concurrency group key. */
-                group: string;
-                /**
-                 * @description Policy toward an active run in the group.
-                 * @enum {string}
-                 */
-                on_conflict: "cancel" | "wait";
-            } | null;
-            /** @description Reporter configuration for runs in this environment. */
-            reporter_config: {
-                /**
-                 * @description Reporter config schema version. Always `1`.
-                 * @enum {number}
-                 */
-                schema_version: 1;
-                /** @description Reporters for this environment, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables notifications. */
-                reporters: {
-                    /**
-                     * @description Reporter kind. `slack_run_status` posts run status updates to Slack channels; it is the only kind accepted today.
-                     * @enum {string}
-                     */
-                    reporter_type: "slack_run_status";
-                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`, not the Slack `C…` channel id). Must belong to the project's organization and not be archived. Deduplicated and sorted on save. */
-                    slack_channel_ids: number[];
-                }[];
-            };
-            /** @description ISO 8601 timestamp. */
-            created_at: string | null;
-            /** @description ISO 8601 timestamp. */
-            updated_at: string | null;
-        };
-        EnvironmentResponse: {
-            /** @description Response payload. */
-            data: {
-                environment: components["schemas"]["Environment"];
-            };
-        };
-        CreateEnvironmentRequest: {
-            /** @description Display name. */
-            name: string;
-            /** @description URL-friendly identifier; unique within the project. */
-            slug: string;
-            /** @description Playwright project names to include. Items must not start with '!'. */
-            playwright_projects_match?: string[];
-            /** @description Playwright project names to exclude. */
-            playwright_projects_ignore?: string[];
-            /** @description Cron expression for scheduled triggers, or null. */
-            scheduled_trigger?: string | null;
-            /** @description Concurrency group and policy scheduled runs are triggered with. Omit to keep the current value; null to fall back to the project's legacy concurrency setting. */
-            scheduled_concurrency?: {
-                /** @description Free-form group key, scoped to the project. */
-                group: string;
-                /**
-                 * @description `cancel` cancels the group's active run and starts; `wait` queues behind it.
-                 * @enum {string}
-                 */
-                on_conflict: "cancel" | "wait";
-            } | null;
-            /** @description Reporter configuration for the environment. Slack channel ids must be active registered channels of the project's organization (GET /api/v2/slack/channels). */
-            reporter_config?: {
-                /**
-                 * @description Reporter config schema version. Always `1`.
-                 * @enum {number}
-                 */
-                schema_version: 1;
-                /** @description Reporters for this environment, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables notifications. */
-                reporters: {
-                    /**
-                     * @description Reporter kind. `slack_run_status` posts run status updates to Slack channels; it is the only kind accepted today.
-                     * @enum {string}
-                     */
-                    reporter_type: "slack_run_status";
-                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`, not the Slack `C…` channel id). Must belong to the project's organization and not be archived. Deduplicated and sorted on save. */
-                    slack_channel_ids: number[];
-                }[];
-            };
-        };
-        EnvironmentSyncResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Always true on success. */
-                success: boolean;
-            };
-        };
-        EnvironmentMutationError: {
-            /** @description Error, returned as a bare string or a `{ message }` object (legacy shape). */
-            error: string | {
-                /** @description Error message. */
-                message: string;
-            };
-        };
-        UpdateEnvironmentRequest: {
-            /** @description Display name. */
-            name?: string;
-            /** @description URL-friendly identifier. */
-            slug?: string;
-            /** @description Whether the environment is disabled. */
-            is_disabled?: boolean;
-            /** @description Playwright project names to include. Items must not start with '!'. */
-            playwright_projects_match?: string[];
-            /** @description Playwright project names to exclude. */
-            playwright_projects_ignore?: string[];
-            /** @description Cron expression for scheduled triggers, or null. */
-            scheduled_trigger?: string | null;
-            /** @description Concurrency group and policy scheduled runs are triggered with. Omit to keep the current value; null to fall back to the project's legacy concurrency setting. */
-            scheduled_concurrency?: {
-                /** @description Free-form group key, scoped to the project. */
-                group: string;
-                /**
-                 * @description `cancel` cancels the group's active run and starts; `wait` queues behind it.
-                 * @enum {string}
-                 */
-                on_conflict: "cancel" | "wait";
-            } | null;
-            /** @description Reporter configuration for the environment. Slack channel ids must be active registered channels of the project's organization (GET /api/v2/slack/channels). */
-            reporter_config?: {
-                /**
-                 * @description Reporter config schema version. Always `1`.
-                 * @enum {number}
-                 */
-                schema_version: 1;
-                /** @description Reporters for this environment, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables notifications. */
-                reporters: {
-                    /**
-                     * @description Reporter kind. `slack_run_status` posts run status updates to Slack channels; it is the only kind accepted today.
-                     * @enum {string}
-                     */
-                    reporter_type: "slack_run_status";
-                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`, not the Slack `C…` channel id). Must belong to the project's organization and not be archived. Deduplicated and sorted on save. */
-                    slack_channel_ids: number[];
-                }[];
-            };
-        };
-        EnvironmentDeleteResponse: {
-            /** @description Always true on success. */
-            success: boolean;
-        };
-        EnvironmentVariableListResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The project's environment variables. */
-                environment_variables: components["schemas"]["EnrichedEnvironmentVariable"][];
-            };
-        };
-        EnrichedEnvironmentVariable: {
-            /** @description Environment variable ID. */
-            id: number;
-            /** @description ID of the project the variable belongs to. */
-            project_id: number;
-            /** @description Variable name. */
-            name: string;
-            /** @description Human-readable description. */
-            description: string;
-            /** @description Variable value. */
-            value: string;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-            /** @description Supabase user ID of the last editor, or null. */
-            updated_by: string | null;
-            /** @description Whether the variable applies to all environments. */
-            all_environments: boolean;
-            /** @description Environment IDs this variable is scoped to. */
-            environment_ids: number[];
-            /** @description Details of the last editor, or null if unknown. */
-            updated_by_user: {
-                /** @description User ID. */
-                id: string;
-                /** @description User email address. */
-                email: string;
-                /** @description User display name. */
-                name: string;
-                /** @description URL to user avatar image. */
-                picture: string;
-            } | null;
-        };
-        EnvironmentVariableResponse: {
-            /** @description Response payload. */
-            data: {
-                environment_variable: components["schemas"]["EnvironmentVariable"];
-            };
-        };
-        EnvironmentVariable: {
-            /** @description Environment variable ID. */
-            id: number;
-            /** @description ID of the project the variable belongs to. */
-            project_id: number;
-            /** @description Variable name. */
-            name: string;
-            /** @description Human-readable description. */
-            description: string;
-            /** @description Variable value. */
-            value: string;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-            /** @description Supabase user ID of the last editor, or null. */
-            updated_by: string | null;
-            /** @description Whether the variable applies to all environments. */
-            all_environments: boolean;
-            /** @description Environment IDs this variable is scoped to. */
-            environment_ids: number[];
-        };
-        EnvironmentVariableSuccessResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Always true on success. */
-                success: boolean;
-            };
-        };
-        EnvironmentVariablesResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The resulting environment variables. */
-                environment_variables: components["schemas"]["EnvironmentVariable"][];
-            };
-        };
-        MemoryListResponse: {
-            data: {
-                memories: components["schemas"]["Memory"][];
-            };
-            pagination: components["schemas"]["Pagination"];
-        };
-        Memory: {
-            id: number;
-            project_id: number;
-            format_version: number;
-            name: string | null;
-            description: string | null;
-            content: string;
-            source: string | null;
-            source_path: string | null;
-            /** @description ID of the chat session the memory was created in, or null if not written from a sandbox session. */
-            source_chat_session_id: number | null;
-            created_by: string | null;
-            updated_by: string | null;
-            /** @description ISO 8601 timestamp. */
-            created_at: string;
-            /** @description ISO 8601 timestamp. */
-            updated_at: string;
-            /** @description ISO 8601 timestamp when the memory was soft-deleted, or null if live. */
-            deleted_at: string | null;
-        };
-        MemoryResponse: {
-            /** @description Response payload. */
-            data: {
-                memory: components["schemas"]["Memory"];
-            };
-        };
-        CreateMemoryRequest: {
-            /** @description Memory content (markdown). */
-            content: string;
-            /** @description Content format version. Defaults to 1. */
-            format_version?: number;
-            /** @description Display name (v2). */
-            name?: string | null;
-            /** @description Short description (v2). */
-            description?: string | null;
-            /** @description Origin of the memory. Free text; "app_knowledge" marks rows migrated from the pre-rename App Knowledge files. */
-            source?: string | null;
-            /** @description Source file path for file-sourced memories; unique within the project. */
-            source_path?: string | null;
-        };
-        UpdateMemoryRequest: {
-            /** @description Memory content (markdown). */
-            content?: string;
-            /** @description Content format version. */
-            format_version?: number;
-            /** @description Display name (v2). */
-            name?: string | null;
-            /** @description Short description (v2). */
-            description?: string | null;
-        };
-        MemoryDeleteResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Always true on success. */
-                success: boolean;
-            };
-        };
-        MemoryVersionListResponse: {
-            /** @description Response payload. */
-            data: {
-                versions: components["schemas"]["MemoryVersion"][];
-            };
-        };
-        MemoryVersion: {
-            id: number;
-            memory_id: number;
-            version: number;
-            format_version: number;
-            name: string | null;
-            description: string | null;
-            content: string;
-            /** @description ID of the chat session that produced this version, or null if not written from a sandbox session. */
-            source_chat_session_id: number | null;
-            created_by: string | null;
-            /** @description ISO 8601 timestamp. */
-            created_at: string;
-        };
-        AlarmResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Opaque id of the scheduled alarm. */
-                alarm_id: string;
-                /** @description The resolved wake-up time, as an ISO 8601 timestamp. */
-                wake_at: string;
-            };
-        };
-        CreateAlarmRequest: {
-            /** @description The note to deliver back into this session when the alarm fires. Write it to your future self: what to resume and any context you'd otherwise lose. */
-            message: string;
-            /** @description How far from now to fire, as a duration string with units m/h/d — e.g. "15m", "2h", "1d", or compound "1h30m". Min 15m, max 72h (3 days). */
-            delay: string;
-        };
-        ProjectResourceListResponse: {
-            /** @description The page of resources. */
-            data: {
-                resources: components["schemas"]["Resource"][];
-            };
-            pagination: components["schemas"]["Pagination"];
         };
         Resource: {
             /** @description Unique identifier. */
@@ -8030,10 +12434,11 @@ export interface components {
             /** @description ISO 8601 timestamp. */
             updated_at: string;
         };
-        CreateProjectResourceResponse: {
+        ResourceUploadContentResponse: {
             /** @description Response payload. */
             data: {
-                resource: components["schemas"]["ResourceWithUploadUrl"];
+                /** @description Whether the upload was stored. */
+                success: boolean;
             };
         };
         ResourceWithUploadUrl: {
@@ -8065,99 +12470,643 @@ export interface components {
             /** @description Presigned URL for uploading the file via PUT. Expires in 1 hour. */
             upload_url: string;
         };
-        CreateProjectResourceRequest: {
-            /** @description Display name for the file. */
+        RetryAttachment: {
+            /** @description Attachment name. */
             name: string;
-            /** @description MIME type of the file. */
-            mime_type?: string;
-            /** @description File size in bytes. */
-            size_bytes?: number;
-            /** @description External URL (e.g. a Google Sheet link). When provided, creates a link-type file with no R2 upload. */
-            url?: string;
-            /** @description Description for the file. */
-            description?: string;
+            /** @description Storage path of the attachment. */
+            path: string;
+            /** @description MIME type of the attachment. */
+            contentType: string;
+            /** @description URL to download the attachment. */
+            url: string;
         };
-        ResourceUploadContentResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether the upload was stored. */
-                success: boolean;
-            };
-        };
-        ProjectResourceResponse: {
-            /** @description Response payload. */
-            data: {
-                resource: components["schemas"]["Resource"];
-            };
-        };
-        UpdateProjectResourceRequest: {
-            /** @description New name for the file. */
-            name?: string;
-            /** @description Description for the file. */
-            description?: string;
+        RetryDetail: {
+            /** @description 0-based attempt index for the retry. */
+            retryIndex: number;
             /**
-             * @description Set to `"uploaded"` to confirm a pending upload.
+             * @description Final status of the retry attempt.
              * @enum {string}
              */
-            status?: "uploaded";
-        };
-        DeleteProjectResourceResponse: {
-            /** @description Response payload. */
-            data: {
-                result: {
-                    /** @description Whether the deletion was successful. */
-                    success: boolean;
+            status: "passed" | "failed" | "timedOut" | "skipped" | "interrupted";
+            /** @description Expected status of the retry. */
+            expectedStatus: string;
+            /** @description Duration of the retry in milliseconds. */
+            duration: number;
+            /** @description ISO 8601 timestamp when the retry started. */
+            startTime: string;
+            /** @description Error details if the retry failed. */
+            error?: {
+                /** @description Error message. */
+                message: string;
+                /** @description Full error stack. */
+                stack: string;
+                /** @description Source location of the error. */
+                location?: {
+                    /** @description Source file of the error. */
+                    file: string;
+                    /** @description Line number of the error. */
+                    line: number;
+                    /** @description Column number of the error. */
+                    column: number;
                 };
             };
+            /** @description Attachments captured during the retry (screenshots, traces, videos). */
+            attachments?: components["schemas"]["RetryAttachment"][];
+            /** @description The source line that triggered the failure. */
+            failingLine?: string;
+            /** @description Playwright annotations for the attempt (static + runtime). Absent on rows recorded before annotations were captured. */
+            annotations?: {
+                /** @description Annotation type. */
+                type: string;
+                /** @description Annotation description, if any. */
+                description?: string;
+            }[];
         };
-        GsheetMetadataResponse: {
+        RunManifestResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Title of the spreadsheet. */
-                title: string;
-                /**
-                 * @description Access the service account has on the spreadsheet: none, read, or read_write.
-                 * @enum {string}
-                 */
-                access_level: "none" | "read" | "read_write";
+                /** @description Whether the run manifest was stored. */
+                created: boolean;
             };
         };
-        GsheetPlainError: {
+        RunnerBackend: {
+            /** @description Runner backend ID. */
+            id: number;
+            /** @description Organisation that owns the installation. */
+            org_id: number;
+            /** @description Human-readable name. */
+            name: string;
+            /** @description AWS account the installation runs in. */
+            aws_account_id: string;
+            /** @description AWS region of the installation. */
+            region: string;
+            /** @description Role api-worker assumes to drive the plane. */
+            role_arn: string;
+            /** @description ECS cluster name. */
+            cluster_name: string;
+            /** @description CloudWatch log group of the worker. */
+            log_group_name: string;
+            /** @description Worker container name. */
+            container_name: string;
+            /** @description Job queue URLs are `${queue_prefix}-${machineSize}`. */
+            queue_prefix: string;
+            /**
+             * @description `pending` until verified; only `active` backends receive runs.
+             * @enum {string}
+             */
+            status: "pending" | "active" | "disabled";
+            /** @description ISO-8601 time of the last successful verify. */
+            last_verified_at: string | null;
+            /** @description ISO-8601 time of the last verify, manual or scheduled, whatever its outcome. */
+            last_checked_at: string | null;
+            /** @description Outcome of the last verify; null if never run. */
+            last_check_ok: boolean | null;
+            /** @description Every check from the last verify. */
+            last_check_results: components["schemas"]["RunnerBackendCheck"][] | null;
+            /** @description ISO-8601 start of the current run of failed checks; null while passing. A failing check does not change `status`. */
+            check_failing_since: string | null;
+            /** @description Release of the CloudFormation template the installation runs, as its stack last reported. */
+            stack_version: string | null;
+            /** @description ISO-8601 time that release was published, if known. */
+            stack_released_at: string | null;
+            /** @description Worker image the installation runs. */
+            worker_version: string | null;
+            /** @description Job protocol version the installation speaks. */
+            protocol_version: string | null;
+            /** @description Optional features the installation supports. */
+            capabilities: string[];
+            /** @description ARN of the CloudFormation stack that registered the installation. */
+            stack_id: string | null;
+            /** @description ISO-8601 time the installation's stack first called home; null until then. */
+            registration_claimed_at: string | null;
+            /** @description ISO-8601 expiry of the current registration link, if one was minted. Ignored once claimed. */
+            registration_token_expires_at: string | null;
+            /** @description ISO-8601 creation time. */
+            created_at: string;
+            /** @description ISO-8601 last-update time. */
+            updated_at: string;
+        };
+        RunnerBackendCheck: {
+            /** @description `assume_role`, `job_queue`, `scaler_trigger_queue`, `ecs_cluster`, `ecs_tasks` or `worker_logs`. */
+            name: string;
+            /** @description Whether the check passed. */
+            ok: boolean;
+            /** @description The resource checked, or the AWS error. */
+            detail: string;
+        };
+        RunnerBackendRegistrationResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Credential the installation's stack calls home with. Shown once; Empirical keeps only its hash. */
+                registration_token: string;
+                /** @description ISO-8601 time the link stops working if unused. */
+                expires_at: string;
+                /** @description Release of the template the link installs. */
+                stack_version: string;
+                /** @description The template the link installs. */
+                template_url: string;
+                /** @description AWS console link that opens CloudFormation with the template and Empirical's parameters filled in. */
+                quick_create_url: string;
+            };
+        };
+        RunnerBackendResponse: {
+            /** @description Response payload. */
+            data: {
+                runner_backend: components["schemas"]["RunnerBackend"];
+            };
+        };
+        RunnerBackendVerifyResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description True when every check passed. */
+                verified: boolean;
+                checks: components["schemas"]["RunnerBackendCheck"][];
+                runner_backend: components["schemas"]["RunnerBackend"];
+            };
+        };
+        SandboxActionSuccess: {
+            /** @description Always true when the action succeeded. */
+            success: boolean;
+        };
+        SandboxAuthRefreshError: {
+            /** @description Machine-readable failure reason. */
+            error: string;
+        };
+        SandboxAuthRefreshResponse: {
+            /** @description Newly minted short-lived sandbox access token. */
+            access_token: string;
+            /** @description Access token lifetime in seconds. */
+            expires_in: number;
+            /** @description ISO 8601 timestamp when the auth session expires. */
+            expires_at: string;
+            /** @description Project the refreshed token is scoped to. */
+            project_id: number;
+        };
+        SandboxBranchesRegistered: {
+            /** @description Count of branches newly registered. */
+            registered: number;
+        };
+        SandboxCommit: {
+            commit: {
+                /** @description Full commit SHA. */
+                sha: string;
+                /** @description First parent SHA; null for a root commit. */
+                parent_sha: string | null;
+                /** @description Full commit message. */
+                message: string;
+                /** @description Files changed. */
+                files_changed: number;
+                /** @description Lines added. */
+                additions: number;
+                /** @description Lines deleted. */
+                deletions: number;
+                /** @description Unified diff against the first parent, when requested. */
+                diff: string | null;
+                /** @description Whether the diff was cut at a file boundary for size. */
+                diff_truncated: boolean;
+            };
+        };
+        SandboxErrorMessage: {
             /** @description Human-readable error message. */
             error: string;
         };
-        GsheetProxyResponse: {
-            /** @description Response payload. */
-            data?: unknown;
-        };
-        GsheetProxyBadRequest: components["schemas"]["ErrorResponse"] | components["schemas"]["GsheetPlainError"];
-        SlackAuthTestResponse: {
-            /** @description Always true on success. */
-            success: boolean;
-            /** @description Raw Slack auth.test result. */
-            data?: unknown;
-        };
-        SlackTeamListResponse: {
-            /** @description Response payload. */
-            data: {
-                teams: components["schemas"]["SlackTeam"][];
+        SandboxHealthResult: {
+            /** @description Sandbox health payload. */
+            health: {
+                /** @description Sandbox health status. */
+                status: string;
+                /** @description Sandbox agent version. */
+                version: string;
+                /** @description Status of the pi agent process. */
+                pi_process?: {
+                    /** @description Whether the pi process is running. */
+                    running: boolean;
+                    /** @description Process ID, if running. */
+                    pid: number | null;
+                    /** @description Exit code, if the process has exited. */
+                    exit_code: number | null;
+                    /** @description Termination signal, if any. */
+                    signal: string | null;
+                    /** @description ISO 8601 process start time. */
+                    started_at: string | null;
+                };
             };
         };
-        SlackTeam: {
-            /** @description Slack workspace (team) ID. */
-            team_id: string;
-            /** @description Slack workspace name. */
-            team_name: string | null;
-            /** @description Whether this is the shared default Empirical workspace. */
-            is_default: boolean;
-            /** @description Slack app install row ID, if org-specific. */
-            install_id: number | null;
+        /** @description Opaque result forwarded from the session Durable Object. */
+        SandboxLifecycleResult: {
+            [key: string]: unknown;
         };
-        SlackAppInstallListResponse: {
-            /** @description The Slack app installs. */
-            data: components["schemas"]["SlackAppInstall"][];
-            /** @description Number of installs. */
-            count: number;
+        SandboxProtectedBranches: {
+            /** @description Branch names the sandbox must not push to. */
+            branches: string[];
+        };
+        SandboxSnapshot: {
+            /** @description Snapshot row ID. */
+            id: number;
+            /** @description Project the snapshot belongs to, or null. */
+            project_id: number | null;
+            /** @description Sandbox provider (e.g. `e2b`). */
+            provider: string;
+            /** @description Snapshot source identifier. */
+            source_name: string;
+            /** @description Playwright version the snapshot was built with. */
+            playwright_version: string;
+            /** @description Hash of the package lockfile, if known. */
+            package_lock_hash: string | null;
+            /** @description Base branch the snapshot was built from. */
+            base_branch: string | null;
+            /** @description Base template the snapshot was built from. */
+            base_template: string | null;
+            /** @description Head commit SHA the snapshot was built from. */
+            head_sha: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 last-update timestamp. */
+            updated_at: string;
+        };
+        SandboxSnapshotListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Snapshots for the project, newest first. */
+                snapshots: components["schemas"]["SandboxSnapshot"][];
+            };
+        };
+        SandboxSnapshotRebuildResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether rebuilds were enqueued. */
+                triggered: boolean;
+                /** @description Number of projects scheduled for rebuild. */
+                project_count: number;
+            };
+        };
+        SandboxSnapshotSourcesUpsertResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Number of sources upserted. */
+                source_count: number;
+                /** @description The upserted snapshot source rows. */
+                sources: (components["schemas"]["SandboxSnapshot"] & unknown)[];
+            };
+        };
+        SandboxSnapshotTriggeredResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether snapshot creation was enqueued. */
+                triggered: boolean;
+            };
+        };
+        ScheduleSnoozeExpiryRequest: {
+            /** @description ID of the snooze whose expiry alarm to register. */
+            snooze_id: number;
+            /** @description ISO timestamp at which the snooze expires and the callback fires. */
+            snooze_until: string;
+        };
+        ScheduleSnoozeExpiryResponse: {
+            /** @description Response payload. */
+            data: {
+                /**
+                 * @description Always true when the alarm was registered.
+                 * @enum {boolean}
+                 */
+                scheduled: true;
+            };
+        };
+        ScopedRealtimeTokenResponse: {
+            /** @description Signed token to authenticate the WebSocket. Opens only the channels listed in `channels`. */
+            token: string;
+            /** @description Unix epoch (seconds) when the token expires. */
+            expires_at: number;
+            /** @description The requested channels the caller may subscribe to. Channels left out are unknown, for another environment, or not accessible. */
+            channels: string[];
+        };
+        SendInvoiceResponse: {
+            /** @description Human-readable confirmation message. */
+            message: string;
+            /** @description ID of the sent invoice. */
+            invoiceId: string;
+            invoice: components["schemas"]["InvoiceWithOrg"];
+            /** @description Echo of the request body. */
+            received: {
+                /** @description Whether this was sent as a test email. */
+                is_test_email?: boolean;
+            };
+        };
+        ServiceToken: {
+            /** @description Service token ID. */
+            id: number;
+            /** @description Leading, non-secret prefix of the token value. */
+            token_prefix: string;
+            /** @description Name of the service the token was issued to. */
+            service_name: string;
+            /** @description User ID that issued the token, if any. */
+            created_by: string | null;
+            /** @description When the token was created (ISO-8601). */
+            created_at: string;
+            /** @description When the token was last used (ISO-8601), or null. */
+            last_used_at: string | null;
+            /** @description When the token was revoked (ISO-8601), or null. */
+            revoked_at: string | null;
+        };
+        ServiceTokenCreatedResponse: {
+            /** @description Response payload. */
+            data: {
+                service_token: components["schemas"]["ServiceToken"];
+                /** @description The full secret token value. Returned only at creation time — store it now, it cannot be retrieved later. */
+                token: string;
+            };
+        };
+        ServiceTokenListResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Service tokens, newest first. */
+                service_tokens: components["schemas"]["ServiceToken"][];
+            };
+        };
+        ServiceTokenResponse: {
+            /** @description Response payload. */
+            data: {
+                service_token: components["schemas"]["ServiceToken"];
+            };
+        };
+        SessionMedia: {
+            handle: string;
+            name: string;
+            key: string;
+            url: string;
+            mime_type: string;
+            size_bytes: number;
+            source_tool_call_id: string | null;
+            created_at: string;
+        };
+        SessionTranscript: {
+            rows: components["schemas"]["SessionTranscriptRow"][];
+            /** @description Media referenced by user and assistant text, keyed by handle. */
+            media_refs: {
+                [key: string]: components["schemas"]["SessionMedia"];
+            };
+            /** @description log_seq of the newest entry the rows were built from. */
+            last_seq: number | null;
+        };
+        SessionTranscriptRow: {
+            id: string;
+            /** @enum {string} */
+            kind: "user";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                text: string;
+                createdBy?: string | null;
+                rpcCommandId?: string;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "assistant";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                text: string;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "tools";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                label: string;
+                count: number;
+                tools: {
+                    name: string;
+                    count: number;
+                }[];
+                durationMs: number;
+                failed: number;
+                running: boolean;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "tool";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                toolCallId: string;
+                name: string;
+                argsSummary: string;
+                failed: boolean;
+                running: boolean;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "message-session";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                toolCallId: string;
+                sessionId: number;
+                created: boolean;
+                message: string | null;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "subagent";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                toolCallId: string;
+                agent: string;
+                /** @enum {string} */
+                mode: "sync" | "async";
+                /** @enum {string} */
+                state: "running" | "done" | "failed";
+                error?: string;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "test-report";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                toolCallId: string;
+                reportUrl: string;
+                summaryUrl: string;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "commit";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                toolCallId: string;
+                sha: string;
+                branch: string | null;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "notification";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                notification: {
+                    /** @enum {string} */
+                    kind: "alarm";
+                    instruction: string;
+                } | {
+                    /** @enum {string} */
+                    kind: "event_subscription";
+                    delivery: {
+                        instruction: string;
+                        event: {
+                            id: string;
+                            type: string;
+                            entity_type: string;
+                            entity_id: string;
+                            occurred_at: string;
+                            payload: {
+                                [key: string]: unknown;
+                            };
+                        };
+                    };
+                } | {
+                    /** @enum {string} */
+                    kind: "system_message";
+                    delivery: {
+                        id: number;
+                        message: string;
+                        ack_instructions: string;
+                    };
+                };
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "compaction";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                tokensBefore: number;
+                tokensAfter?: number;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "job";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                jobId: string;
+                command: string;
+                exitCode: number | null;
+                signal: string | null;
+                timedOut: boolean;
+                durationMs: number;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "error";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: {
+                message: string;
+            };
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "stopped";
+            timestamp: string;
+            seqFrom?: number;
+            seqTo?: number;
+            data: Record<string, never>;
+        };
+        SetProjectRunnerBackendBody: {
+            /** @description An active backend of the project's organisation, or null for Empirical-hosted. */
+            runner_backend_id: number | null;
+        };
+        SetupRunnerBackendBody: {
+            /** @description 12-digit AWS account to install the runner in. */
+            aws_account_id: string;
+            /** @description AWS region with a published template, e.g. `us-east-1`. */
+            region: string;
+        };
+        SetupRunnerBackendResponse: {
+            /** @description Response payload. */
+            data: {
+                runner_backend: components["schemas"]["RunnerBackend"];
+                /** @description Response payload. */
+                registration: {
+                    /** @description Credential the installation's stack calls home with. Shown once; Empirical keeps only its hash. */
+                    registration_token: string;
+                    /** @description ISO-8601 time the link stops working if unused. */
+                    expires_at: string;
+                    /** @description Release of the template the link installs. */
+                    stack_version: string;
+                    /** @description The template the link installs. */
+                    template_url: string;
+                    /** @description AWS console link that opens CloudFormation with the template and Empirical's parameters filled in. */
+                    quick_create_url: string;
+                };
+            };
+        };
+        ShardManifestTests: {
+            /** @description Shard index, or null for a non-sharded run. */
+            shard_index: number | null;
+            /** @description Scheduled tests on this shard that have run. */
+            ran_count: number;
+            /** @description Total tests scheduled on this shard. */
+            scheduled_count: number;
+            /** @description Scheduled tests in order, each tagged ran/pending. */
+            tests: components["schemas"]["TestRunManifestTest"][];
+        };
+        ShardPlanResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Rows inserted. Zero when the run was already planned — the first plan wins and a retried POST is a no-op. */
+                shards_written: number;
+                /** @description Tests across the posted partition. */
+                total_tests: number;
+            };
+        };
+        SimpleErrorResponse: {
+            /** @description Error message. */
+            error: string;
+        };
+        SkipTestRunRequest: {
+            /** @description Full repository name in owner/repo format. */
+            repo: string;
+            /** @description Full Git commit SHA. */
+            commit_sha: string;
+            /** @description Environment slug. */
+            environment?: string;
+        };
+        SkipTestRunResponse: {
+            data: {
+                /** @description ID of the GitHub check run created as skipped, or null if no GitHub reporter app is installed for the repo. */
+                check_run_id: number | null;
+                /** @description The status of the test run. */
+                status: string;
+            };
+            /** @description Always null for success responses. */
+            error: unknown;
         };
         SlackAppInstall: {
             /** @description Slack app install ID. */
@@ -8185,6 +13134,12 @@ export interface components {
             team_url: string | null;
             /** @description ISO 8601 creation timestamp. */
             created_at: string | null;
+        };
+        SlackAppInstallListResponse: {
+            /** @description The Slack app installs. */
+            data: components["schemas"]["SlackAppInstall"][];
+            /** @description Number of installs. */
+            count: number;
         };
         SlackAppInstallMutationResponse: {
             /** @description Whether the write succeeded. */
@@ -8248,11 +13203,97 @@ export interface components {
                 created_at: string | null;
             };
         };
-        SlackFileMetadataResponse: {
-            /** @description Response payload. */
+        SlackAppInstallUpsertResponse: {
+            /** @description Whether the write succeeded. */
+            success: boolean;
+            /** @description The Slack app install; null when the install was into Empirical's own workspace, which is not stored per org. */
             data: {
-                file: components["schemas"]["SlackFileMetadata"];
+                /** @description Slack app install ID. */
+                id: number;
+                /** @description Organisation ID. */
+                org_id: number;
+                /** @description Slack app ID. */
+                slack_app_id: string;
+                /** @description Authorizing Slack user ID. */
+                authed_user_id: string;
+                /** @description OAuth scopes (CSV). */
+                scope: string;
+                /** @description OAuth token type. */
+                token_type: string;
+                /** @description Bot user ID. */
+                bot_user_id: string;
+                /** @description Slack workspace (team) ID. */
+                team_id: string;
+                /** @description Slack workspace name. */
+                team_name: string;
+                /**
+                 * Format: uri
+                 * @description Slack workspace URL learned from auth.test.
+                 */
+                team_url: string | null;
+                /** @description ISO 8601 creation timestamp. */
+                created_at: string | null;
+            } | null;
+            /** @description True when nothing was stored (Empirical's workspace). */
+            skipped?: boolean;
+        };
+        SlackAuthTestResponse: {
+            /** @description Always true on success. */
+            success: boolean;
+            /** @description Raw Slack auth.test result. */
+            data?: unknown;
+        };
+        SlackChannelListV2Response: {
+            data: {
+                channels: components["schemas"]["SlackChannelV2"][];
             };
+        };
+        SlackChannelRefreshV2Response: {
+            data: {
+                channel: components["schemas"]["ValidatedSlackChannelV2"];
+                /** @description Whether the stored channel name was replaced with Slack's current name. */
+                renamed: boolean;
+                /** @description Channel name stored before the refresh. */
+                previous_channel_name: string | null;
+            };
+        };
+        SlackChannelV2: {
+            /** @description Canonical Slack channel ID. */
+            id: number;
+            /** @description Organization scope ID. */
+            org_id: number;
+            /** @description Slack app installation ID, or null for the shared default installation. */
+            slack_app_install_id: number | null;
+            /**
+             * @description Credential source used to access the Slack workspace.
+             * @enum {string}
+             */
+            installation_source: "default" | "org";
+            /** @description Slack workspace (team) ID. */
+            team_id: string;
+            /** @description Slack channel ID. */
+            channel_id: string;
+            /** @description Last known Slack channel name. */
+            channel_name: string | null;
+            /** @description ISO 8601 archival timestamp. */
+            archived_at: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 update timestamp. */
+            updated_at: string;
+        };
+        SlackChannelValidationListV2Response: {
+            data: {
+                channels: components["schemas"]["ValidatedSlackChannelV2"][];
+            };
+        };
+        SlackFileDownloadError: {
+            /** @description Error message. */
+            error: string;
+            /** @description Content type returned by Slack, if any. */
+            content_type?: string | null;
+            /** @description HTTP status returned by Slack, if any. */
+            upstream_status?: number;
         };
         SlackFileMetadata: {
             /** @description Slack file ID. */
@@ -8266,15 +13307,45 @@ export interface components {
             /** @description Relative path to download the file content. */
             download_path: string;
         };
-        SlackFileDownloadError: {
+        SlackFileMetadataResponse: {
+            /** @description Response payload. */
+            data: {
+                file: components["schemas"]["SlackFileMetadata"];
+            };
+        };
+        SlackLinkListResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["SlackUserLink"][];
+        };
+        SlackMessageEditResult: {
+            /** @enum {boolean} */
+            ok: true;
+            /** @description Slack channel ID. */
+            channel: string;
+            /** @description Timestamp id of the message. */
+            ts: string;
+        };
+        SlackMessageError: {
             /** @description Error message. */
             error: string;
-            /** @description Content type returned by Slack, if any. */
-            content_type?: string | null;
-            /** @description HTTP status returned by Slack, if any. */
-            upstream_status?: number;
+        };
+        SlackMessageResult: {
+            /** @enum {boolean} */
+            ok: true;
+            /** @description Resolved DM channel, returned for recipient-addressed sends. */
+            channel?: string;
+            /** @description Root timestamp for future replies; ts is the posted message timestamp. */
+            thread_ts?: string;
+            /** @description Registered physical Slack root ID. */
+            slack_thread_id?: number;
+            /** @description Timestamp id of the message that was posted. */
+            ts: string;
         };
         SlackProxyError: {
+            /** @description Error message. */
+            error: string;
+        };
+        SlackReactionError: {
             /** @description Error message. */
             error: string;
         };
@@ -8286,17 +13357,47 @@ export interface components {
             /** @enum {string} */
             action: "add" | "remove";
         };
-        SlackReactionError: {
+        SlackRunStartThreadReplacedError: {
             /** @description Error message. */
             error: string;
+            /**
+             * @description Machine-readable reason for the rejection.
+             * @enum {string}
+             */
+            code: "run_start_thread_replaced";
+            /** @description Test run whose run-start notification was replaced. */
+            test_run_id: string;
+            /** @description The run's current notification thread in the same channel, or null while the final notification is still being posted. */
+            replacement: {
+                /** @description Slack channel ID. */
+                channel: string;
+                /** @description Root timestamp to reply to instead. */
+                thread_ts: string;
+                /** @description Registered physical Slack root ID. */
+                slack_thread_id: number;
+            } | null;
         };
-        SlackThreadListResponse: {
-            /** @description Registered Slack threads for this page. */
+        SlackScopeRefreshResponse: {
+            /** @description Whether the refresh succeeded. */
+            success: boolean;
+            /** @description Granted OAuth scopes (CSV). */
+            scope: string;
+        };
+        SlackTeam: {
+            /** @description Slack workspace (team) ID. */
+            team_id: string;
+            /** @description Slack workspace name. */
+            team_name: string | null;
+            /** @description Whether this is the shared default Empirical workspace. */
+            is_default: boolean;
+            /** @description Slack app install row ID, if org-specific. */
+            install_id: number | null;
+        };
+        SlackTeamListResponse: {
+            /** @description Response payload. */
             data: {
-                /** @description The page of registered Slack threads. */
-                threads: components["schemas"]["SlackThread"][];
+                teams: components["schemas"]["SlackTeam"][];
             };
-            pagination: components["schemas"]["Pagination"];
         };
         SlackThread: {
             /** @description Registry thread ID. */
@@ -8361,16 +13462,16 @@ export interface components {
             /** @description ISO 8601 update time. */
             updated_at: string;
         };
-        SlackThreadPreviewResponse: {
-            /** @description Compact Slack thread preview. */
+        SlackThreadEntityLinkResponse: {
+            data: components["schemas"]["SlackThreadEntityLink"];
+        };
+        SlackThreadListResponse: {
+            /** @description Registered Slack threads for this page. */
             data: {
-                /** @description The root message followed by the first replies. */
-                messages: components["schemas"]["SlackThreadPreviewMessage"][];
-                /** @description Total replies reported by Slack. */
-                reply_count: number;
-                /** @description Replies not included in this compact preview. */
-                omitted_count: number;
+                /** @description The page of registered Slack threads. */
+                threads: components["schemas"]["SlackThread"][];
             };
+            pagination: components["schemas"]["Pagination"];
         };
         SlackThreadPreviewMessage: {
             /** @description Slack message timestamp. */
@@ -8389,463 +13490,154 @@ export interface components {
                 count: number;
             }[];
         };
-        SlackMessageResult: {
-            /** @enum {boolean} */
-            ok: true;
-            /** @description Resolved DM channel, returned for recipient-addressed sends. */
-            channel?: string;
-            /** @description Root timestamp for future replies; ts is the posted message timestamp. */
-            thread_ts?: string;
-            /** @description Registered physical Slack root ID. */
-            slack_thread_id?: number;
-            /** @description Timestamp id of the message that was posted. */
-            ts: string;
+        SlackThreadPreviewResponse: {
+            /** @description Compact Slack thread preview. */
+            data: {
+                /** @description The root message followed by the first replies. */
+                messages: components["schemas"]["SlackThreadPreviewMessage"][];
+                /** @description Total replies reported by Slack. */
+                reply_count: number;
+                /** @description Replies not included in this compact preview. */
+                omitted_count: number;
+            };
         };
-        SlackMessageError: {
-            /** @description Error message. */
-            error: string;
-        };
-        SlackSupportedAction: {
-            /**
-             * @description Add a button that opens this pull request for review.
-             * @enum {string}
-             */
-            type: "review_pr";
-            /** @description Pull request number in the authenticated project's repository. */
-            pr_number: number;
-        } | {
-            /**
-             * @description Add a button that lets an authorized Slack user merge this pull request.
-             * @enum {string}
-             */
-            type: "merge_pr";
-            /** @description Pull request number in the authenticated project's repository. */
-            pr_number: number;
-        };
-        ChatSessionUsersResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["ChatSessionUserDetail"][];
-        };
-        ChatSessionUserDetail: {
+        SlackUserLink: {
+            /** @description Link ID. */
+            id: number;
+            /** @description Whether the link is currently valid. */
+            is_link_valid: boolean | null;
+            /** @description ISO 8601 timestamp the link was last validated. */
+            last_validated_at: string | null;
             /** @description Supabase user ID. */
-            id: string;
-            /** @description User email. */
-            email: string;
-            /** @description Display name. */
-            name: string;
-            /** @description Avatar URL. */
-            picture: string;
-        };
-        ChatSessionCombinedAnalyticsResponse: {
-            /** @description Response payload. */
-            data: {
-                my: components["schemas"]["ChatSessionChartData"];
-                overall: components["schemas"]["ChatSessionChartData"];
-                /** @description Label for the `overall` chart. */
-                overallLabel: string;
-            };
-        };
-        ChatSessionChartData: {
-            /** @description Per-day session counts. */
-            daily: {
-                /** @description Day (ISO date). */
-                date: string;
-                /** @description Sessions created that day. */
-                created: number;
-                /** @description Sessions merged that day. */
-                merged: number;
-            }[];
-            /** @description Totals across the window. */
-            summary: {
-                total_created: number;
-                total_merged: number;
-                /** @description Merge rate as a percentage (0-100). */
-                merge_rate: number;
-            };
-        };
-        ChatSessionListResponse: {
-            /** @description The page of chat sessions. */
-            data: components["schemas"]["ChatSessionListItem"][];
-            /** @description Pagination + resolved filter state. */
-            pagination: {
-                /** @description Current page. */
-                page: number;
-                /** @description Items per page. */
-                per_page: number;
-                /** @description Resolved filter state for the query. */
-                filter_state: {
-                    showClosed: boolean;
-                    filterState: {
-                        field: string;
-                        /** @enum {string} */
-                        operator: "eq" | "neq" | "in" | "nin" | "gt" | "gte" | "lt" | "lte" | "contains" | "startsWith";
-                        value: string | number | boolean | (string | number | boolean)[];
-                    }[];
-                    userIds: string[];
-                    /** @enum {string} */
-                    category?: "executor" | "user";
-                };
-            };
-        };
-        ChatSessionListItem: {
-            /** @description Chat session ID. */
-            id: number;
-            /** @description Session title. */
-            title: string | null;
-            /** @description Creator user ID. */
-            created_by: string | null;
-            /** @description Creation timestamp (ISO). */
-            created_at: string;
-            /** @description Last update timestamp (ISO). */
-            updated_at: string;
-            /** @description Owning project ID. */
-            project_id: number;
-            /** @description Session mode (e.g. chat). */
-            mode: string;
-            /** @description Origin of the session. */
+            user_id: string;
+            /** @description Slack workspace whose app installation reaches the user. */
+            team_id: string;
+            /** @description Slack user's home workspace ID. */
+            slack_home_team_id: string | null;
+            /**
+             * Format: uri
+             * @description Slack user's home workspace URL.
+             */
+            slack_home_team_url: string | null;
+            /** @description Slack user ID. */
+            slack_user_id: string;
+            /** @description Slack username. */
+            slack_user_name: string | null;
+            /** @description Slack avatar image URL. */
+            slack_image_url: string | null;
+            /** @description Slack real name. */
+            slack_user_real_name: string | null;
+            /** @description Slack display name. */
+            slack_user_display_name: string | null;
+            /** @description Whether the Slack user is a workspace admin. */
+            slack_is_admin: string | null;
+            /** @description Whether the Slack user is a bot. */
+            slack_is_bot: string | null;
+            /** @description Slack DM channel ID for the user. */
+            slack_dm_channel_id: string | null;
+            /** @description ISO 8601 timestamp the DM channel was resolved. */
+            slack_dm_channel_updated_at: string | null;
+            /** @description Slack app ID the link belongs to (provenance only). */
+            app_id: string | null;
+            /** @description How the link was created. */
             source: string;
-            /** @description Source-specific identifier. */
-            source_identifier: string;
-            /**
-             * @description Workload class, assigned server-side; null for an ordinary user chat. Read-only — no request body accepts it.
-             * @enum {string|null}
-             */
-            purpose?: "triage" | "manager" | null;
-            /** @description Requested model. */
-            model: string | null;
-            /** @description Whether the agent is awaiting user input. */
-            ask_user_for_input: boolean | null;
-            /** @description Langfuse trace ID. */
-            langfuse_trace_id: string | null;
-            /** @description Whether the session is closed. */
-            is_closed: boolean;
-            /** @description Feature flags enabled for the session. */
-            feature_flags: string[];
-            /** @description Resolved Supabase details for the creator. */
-            created_by_user_detail?: {
-                /** @description Supabase user ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description Display name. */
-                name: string;
-                /** @description Avatar URL. */
-                picture: string;
-            } | null;
-            /** @description Number of the session's most recently updated PR, if any. */
-            pr_number: number | null;
-            /** @description Status of the session's most recently updated PR ('unopened' when it has none). */
-            pr_status: string;
-            /** @description Name of the owning project. */
-            project_name: string | null;
-            /** @description Repository name of the owning project. */
-            project_repo_name: string | null;
-            /** @description Repository owner of the owning project. */
-            project_repo_owner: string | null;
-        };
-        ChatSessionCreateResponse: {
-            /** @description Response payload. */
-            data: {
-                chat_session: components["schemas"]["ChatSession"];
-            };
-        };
-        ChatSessionDetailResponse: {
-            /** @description Response payload. */
-            data: {
-                chat_session: components["schemas"]["ChatSessionWithUser"];
-            };
-        };
-        ChatSessionWithUser: {
-            /** @description Chat session ID. */
-            id: number;
-            /** @description Session title. */
-            title: string | null;
-            /** @description Creator user ID. */
-            created_by: string | null;
-            /** @description Creation timestamp (ISO). */
+            /** @description ISO 8601 timestamp the link was created. */
             created_at: string;
-            /** @description Last update timestamp (ISO). */
-            updated_at: string;
-            /** @description Owning project ID. */
-            project_id: number;
-            /** @description Base branch name. */
-            base_branch: string;
-            /** @description Session mode (e.g. chat). */
-            mode: string;
-            /** @description Origin of the session. */
-            source: string;
-            /** @description Source-specific identifier. */
-            source_identifier: string;
-            /**
-             * @description Workload class, assigned server-side; null for an ordinary user chat. Read-only — no request body accepts it.
-             * @enum {string|null}
-             */
-            purpose?: "triage" | "manager" | null;
-            /** @description Requested model. */
-            model: string | null;
-            /** @description Opaque agent chat state. */
-            chat_state?: unknown;
-            /** @description Tests impacted by this session. */
-            impacted_tests?: unknown;
-            /** @description Whether the agent is awaiting user input. */
-            ask_user_for_input: boolean | null;
-            /** @description Langfuse trace ID. */
-            langfuse_trace_id: string | null;
-            /** @description Whether the session is closed. */
-            is_closed: boolean;
-            /** @description Feature flags enabled for the session. */
-            feature_flags: string[];
-            /** @description Durable outbox row for the first message. */
-            pending_first_message?: unknown;
-            /** @description Resolved Supabase details for the creator. */
-            created_by_user_detail?: {
-                /** @description Supabase user ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description Display name. */
-                name: string;
-                /** @description Avatar URL. */
-                picture: string;
-            } | null;
-        };
-        ChatSessionPatchResponse: {
-            /** @description Response payload. */
-            data: {
-                chat_session: components["schemas"]["ChatSession"];
-            };
-        };
-        ChatSessionForwardMessageResponse: {
-            /** @description Response payload. */
-            data: {
-                chat_session: components["schemas"]["ChatSession"];
-            };
-        };
-        ChatSessionTimelineResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["ChatSessionTimelineEvent"][];
-        };
-        ChatSessionTimelineEvent: {
-            /** @description Timeline event ID. */
-            id: number;
-            /** @description Owning chat session ID. */
-            chat_session_id: number;
-            /**
-             * @description Timeline event type.
-             * @enum {string}
-             */
-            event_type: "pr.opened" | "pr.merged" | "pr.closed" | "chat_session.closed" | "branch.created";
-            /** @description Related pull request number, if any. */
-            pr_number: number | null;
-            /** @description User who triggered the event. */
-            created_by: string | null;
-            /** @description Event timestamp (ISO). */
-            created_at: string;
-            /** @description Resolved Supabase details for the triggerer. */
-            created_by_user_detail?: {
-                /** @description Supabase user ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description Display name. */
-                name: string;
-                /** @description Avatar URL. */
-                picture: string;
-            } | null;
-        };
-        ChatSessionBranchesResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["ChatSessionBranch"][];
-        };
-        ChatSessionBranch: {
-            /** @description Branch name. */
-            branch_name: string;
-            /** @description Repository host. */
-            repo_host: string;
-            /** @description Repository owner. */
-            repo_owner: string;
-            /** @description Repository name. */
-            repo_name: string;
-            /** @description When the branch was registered (ISO). */
-            created_at: string;
-            /** @description Pull requests opened from this branch, oldest first. Empty when no PR exists yet. */
-            pull_requests: components["schemas"]["ChatSessionBranchPullRequest"][];
-        };
-        ChatSessionBranchPullRequest: {
-            /** @description Pull request number. */
-            number: number;
-            /**
-             * @description Current pull request status.
-             * @enum {string}
-             */
-            status: "unopened" | "open" | "opened" | "closed" | "merged";
-            /** @description Pull request URL. */
-            url: string;
-            /** @description Branch the pull request merges into. */
-            base_branch: string;
-            /** @description Merge timestamp (ISO), null if not merged. */
-            merged_at: string | null;
-            /** @description When the head branch was deleted (ISO), null while it exists. */
-            head_branch_deleted_at: string | null;
-            /** @description Creation timestamp (ISO). */
-            created_at: string;
-            /** @description Last update timestamp (ISO). */
+            /** @description ISO 8601 timestamp the link was last updated. */
             updated_at: string;
         };
-        ChatSessionCommitDiffResponse: {
-            /** @description Response payload. */
+        Snooze: {
+            /** @description Unique identifier for the snooze. */
+            id: number;
+            /** @description Array of Playwright test IDs (41-character hashes) that are snoozed. */
+            test_ids: string[];
+            /** @description ISO 8601 timestamp for when the snooze expires. Active when in the future. */
+            snooze_until: string;
+            /** @description Description of why the tests are snoozed. */
+            description: string | null;
+            /** @description ID of the test run that triggered the snooze creation, if applicable. */
+            created_from_test_run_id: number | null;
+            /** @description User ID of the creator. Set automatically for dashboard users; `null` for API-created snoozes. */
+            created_by: string | null;
+            /** @description ISO 8601 timestamp of when the snooze was created. */
+            created_at: string;
+            /** @description ISO 8601 timestamp of when the snooze was last updated. */
+            updated_at: string;
+            /** @description Environment ID this snooze is scoped to. `null` if it applies to all environments. */
+            scoped_to_environment_id: number | null;
+        };
+        SnoozeListResponse: {
+            /** @description The page of snoozes. */
             data: {
-                /** @description Unified diff for the commit. */
-                diff: string;
-                /** @description Commit SHA. */
-                commit: string;
+                snoozes: components["schemas"]["Snooze"][];
             };
-        };
-        ChatSessionCommitsDiffsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Diffs keyed by commit SHA. */
-                diffs: {
-                    [key: string]: {
-                        /** @description Commit SHA. */
-                        commit: string;
-                        /** @description Unified diff, or null if unavailable. */
-                        diff: string | null;
-                    };
-                };
-            };
-        };
-        ChatSessionCumulativeDiffResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Cumulative diff from base branch to head. */
-                diff: string | null;
-            };
-        };
-        ChatSessionDiffResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Working diff. */
-                diff: string | null;
-                /** @description SHA of the last commit. */
-                last_commit: string | null;
-                /** @description Timestamp of the last commit (ISO). */
-                last_commit_at: string | null;
-                /** @description Associated pull request metadata, if any. */
-                pull_request: {
-                    /** @description Pull request title. */
-                    title: string;
-                    /** @description Pull request description. */
-                    description: string;
-                } | null;
-                /** @description Base ref of the comparison. */
-                base_ref?: string;
-                /** @description Head ref of the comparison. */
-                head_ref?: string;
-            };
-        };
-        ChatSessionCostsResponse: {
-            data: components["schemas"]["ChatSessionCostTotals"];
-            /** @description Number of session entries summed. */
-            entries_count: number;
-        };
-        ChatSessionCostTotals: {
-            /** @description Main-agent cost. */
-            main: number;
-            /** @description Sub-agent cost. */
-            subagent: number;
-            /** @description Manager handoff-note cost. */
-            handoff: number;
-            /** @description Total cost (main + subagent + handoff). */
-            total: number;
-            /** @description Input-token cost. */
-            costInput: number;
-            /** @description Output-token cost. */
-            costOutput: number;
-            /** @description Cache-read cost. */
-            costCacheRead: number;
-            /** @description Cache-write cost. */
-            costCacheWrite: number;
-            /** @description Input tokens consumed. */
-            tokensIn: number;
-            /** @description Output tokens produced. */
-            tokensOut: number;
-            /** @description Cache-read tokens. */
-            cacheRead: number;
-            /** @description Cache-write tokens. */
-            cacheWrite: number;
-            /** @description Cache hit rate, or null when no prompt input. */
-            cacheHitRate: number | null;
-        };
-        ChatSessionStateResponse: {
-            data: components["schemas"]["ChatSessionState"];
             pagination: components["schemas"]["Pagination"];
         };
-        ChatSessionState: {
-            /** @description Recent session log entries. */
-            entries: unknown[];
-            /** @description User messages for the session. */
-            user_messages: unknown[];
-            /** @description Current sandbox state, or null when none. */
-            sandbox?: unknown;
-        };
-        ChatSessionSnapshotResponse: {
-            data: components["schemas"]["ChatSessionSnapshot"];
-        };
-        ChatSessionSnapshot: {
-            /** @description Current sandbox status event. */
-            sandbox?: unknown;
-            /** @description Agent lifecycle state (active run ids, is_working). */
-            lifecycle?: unknown;
-            /** @description All user messages for the session. */
-            user_messages: unknown[];
-        };
-        ChatSessionCloseResponse: {
+        SnoozeResponse: {
             /** @description Response payload. */
             data: {
-                chat_session: components["schemas"]["ChatSession"];
+                snooze: components["schemas"]["Snooze"];
             };
         };
-        SandboxBranchesRegistered: {
-            /** @description Count of branches newly registered. */
-            registered: number;
+        SpotInterruptionRequest: {
+            /** @description The stopped ECS task's `startedBy` tag (`emp/<runId>/<shard>/<jobType>`). */
+            started_by: string;
+            /**
+             * @description AWS region the task-state-change event came from.
+             * @enum {string}
+             */
+            region: "us-east-1" | "ap-south-1";
+            /** @description ECS task id of the interrupted task, for the audit trail. */
+            task_id?: string;
+            /** @description ECS `stoppedReason`, for the audit trail. */
+            stopped_reason?: string;
         };
-        SandboxErrorMessage: {
-            /** @description Human-readable error message. */
-            error: string;
+        SpotInterruptionResponse: {
+            /** @description Response payload. */
+            data: {
+                /**
+                 * @description Whether the shard was re-dispatched, or the event needed no action.
+                 * @enum {string}
+                 */
+                action: "reenqueued" | "skipped";
+                /** @description Why the event was skipped; absent on re-enqueue. */
+                reason?: string;
+            };
         };
-        SandboxProtectedBranches: {
-            /** @description Branch names the sandbox must not push to. */
-            branches: string[];
+        StartRepoTransferBadRequest: components["schemas"]["RepoTransferCodedError"] | components["schemas"]["ErrorResponse"];
+        StartRepoTransferRequest: {
+            /** @description GitHub org/owner to transfer the repo to. */
+            target_repo_owner: string;
+            /** @description Repository name at the target owner. */
+            target_repo_name: string;
         };
-        SandboxActionSuccess: {
-            /** @description Always true when the action succeeded. */
-            success: boolean;
+        StaticIpsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description AWS region of the proxy fleet. */
+                region: string;
+                /** @description Human-readable location. */
+                location: string;
+                /** @description Proxy endpoint to point Playwright's proxy config at. */
+                endpoint: string;
+                /** @description Egress IPs to allowlist. One per proxy instance. */
+                ips: string[];
+            };
         };
-        /** @description Opaque result forwarded from the session Durable Object. */
-        SandboxLifecycleResult: {
-            [key: string]: unknown;
+        StopTaskRequest: {
+            /** @description Zero-based shard index, when stopping a sharded run. */
+            shard_index?: number;
+            /**
+             * @description Job type of the shard to stop. merge_reports and run_setup share shard_index 0. When omitted, the job is resolved from the run's shard rows; an index that carries more than one stoppable job is a 400. `run_setup` is never stoppable and is always rejected.
+             * @enum {string}
+             */
+            job_type?: "run_test" | "merge_reports" | "run_setup";
         };
-        SandboxHealthResult: {
-            /** @description Sandbox health payload. */
-            health: {
-                /** @description Sandbox health status. */
-                status: string;
-                /** @description Sandbox agent version. */
-                version: string;
-                /** @description Status of the pi agent process. */
-                pi_process?: {
-                    /** @description Whether the pi process is running. */
-                    running: boolean;
-                    /** @description Process ID, if running. */
-                    pid: number | null;
-                    /** @description Exit code, if the process has exited. */
-                    exit_code: number | null;
-                    /** @description Termination signal, if any. */
-                    signal: string | null;
-                    /** @description ISO 8601 process start time. */
-                    started_at: string | null;
-                };
+        StopTaskResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether the SIGTERM was sent to the task. */
+                success: boolean;
             };
         };
         SubscribeChatSessionResponse: {
@@ -8854,673 +13646,295 @@ export interface components {
                 subscription_id?: number;
             };
         };
-        GithubBranchSearchResponse: {
+        SubscriptionCheckoutResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Matching branch names, capped by `limit`. */
-                branches: string[];
+                /** @description Dodo hosted checkout to open. It returns to the billing page. */
+                checkout_url: string;
             };
         };
-        GithubCommitDiffResponse: {
+        SubscriptionEndResponse: {
             /** @description Response payload. */
-            data: {
-                /** @description Unified diff for the commit. */
-                diff: string;
-                /** @description Resolved commit ref. */
-                commit: string;
-            };
-        };
-        GithubFileContentsResponse: {
-            /** @description Response payload. */
-            data: {
-                fileContents: {
-                    /** @description Decoded file contents. */
-                    content: string;
-                    /** @description Always true when present. */
-                    available: boolean;
-                    /** @description Blob SHA of the file. */
-                    sha: string;
-                };
-            };
-        };
-        GithubFileMutationResponse: {
-            /** @description Raw GitHub content mutation response. */
-            file?: unknown;
-        };
-        GithubTreeResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Raw GitHub git tree object. */
-                tree?: unknown;
-            };
-        };
-        GithubPrMergeResponse: {
-            data: {
-                /** @description Whether the PR was merged. */
-                merged: boolean;
-                /** @description Human-readable status. */
-                message: string;
-            };
-            error: unknown;
-        };
-        GithubActionError: {
-            /** @description Null when present. */
-            data?: unknown;
-            /** @description Error message. */
-            error: string;
-        };
-        GithubPrCloseResponse: {
-            data: {
-                /** @description Whether the PR was closed. */
-                closed: boolean;
-                /** @description Human-readable status. */
-                message: string;
-            };
-            error: unknown;
-        };
-        GithubPrReviewResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Repository owner. */
-                owner: string;
-                /** @description Repository name. */
-                repo: string;
-                number: number;
-                /** @enum {string} */
-                status: "open" | "closed" | "merged";
-                url: string;
-                title: string;
-                description: string;
-                /** @description Unified pull request diff. */
-                diff: string;
-                /** @description Pull request head SHA. */
-                last_commit: string;
-                last_commit_at: string;
-                /** @description Base commit SHA. */
-                base_ref: string;
-                /** @description Head commit SHA. */
-                head_ref: string;
-                base_branch: string;
-                head_branch: string;
-                merged_at: string | null;
-            };
-        };
-        GithubPrReviewTargetResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Chat session that owns the pull request. */
-                chat_session_id: number;
-                /** @description Resolved pull request number. */
-                pr_number: number;
-            };
-        };
-        GithubPrMergeabilityResponse: {
             data: {
                 /**
-                 * @description Computed mergeability status.
+                 * @description What the subscription became in Dodo: `cancelled` when there was no usage beyond the plan's allowance; `paused` when there was, which Dodo charges on pausing (the subscription is cancelled once that charge succeeds). Either way the plan has ended.
                  * @enum {string}
                  */
-                status: "not_open" | "mergeable" | "not_mergeable" | "calculating";
-                /** @description GitHub's mergeable_state value. */
-                mergeable_state: string;
-                /** @description Base branch of the PR. */
-                base: string;
-            };
-            error: unknown;
-        };
-        GhReporterMetadataResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description GitHub installation metadata (permissions, repos, organization). */
-                ghAppMetadata?: unknown;
+                status: "cancelled" | "paused";
+                /** @description Whether Dodo charges a final payment for this cycle's usage beyond the allowance. */
+                final_charge: boolean;
             };
         };
-        GhReporterInstallListResponse: {
+        SubscriptionOfferResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Reporter App installation rows. */
-                gh_app_installs: unknown[];
-            };
-        };
-        GhReporterInstallResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The reporter App installation row. */
-                installation?: unknown;
-            };
-        };
-        GhReporterDeliveriesResponse: {
-            /** @description Response payload. */
-            data: {
-                check_runs: components["schemas"]["GhReporterCheckRunDelivery"][];
-                pr_comments: components["schemas"]["GhReporterPrCommentDelivery"][];
-            };
-        };
-        GhReporterCheckRunDelivery: {
-            id: number;
-            test_run_id: number;
-            environment_name: string | null;
-            repo_owner: string;
-            repo_name: string;
-            head_sha: string | null;
-            /** @description Null when GitHub never accepted the check run. */
-            check_run_id: number | null;
-            check_run_url: string | null;
-            status: string | null;
-            conclusion: string | null;
-            /** @description Error from the most recent delivery attempt; cleared on success. */
-            last_error: string | null;
-            created_at: string;
-            updated_at: string;
-        };
-        GhReporterPrCommentDelivery: {
-            id: number;
-            environment_name: string | null;
-            repo_owner: string;
-            repo_name: string;
-            pr_number: number;
-            comment_id: number;
-            comment_url: string | null;
-            last_test_run_id: number | null;
-            last_status: string | null;
-            last_error: string | null;
-            created_at: string;
-            updated_at: string;
-        };
-        GhReporterWebhookAck: {
-            /** @description Response payload. */
-            data: {
-                /** @description Always true; the event was accepted for async processing. */
-                received: boolean;
-            };
-        };
-        GithubAdminWebhookAck: {
-            /** @description Response payload. */
-            data: {
-                /** @description Always true; the event was accepted. */
-                received: boolean;
-            };
-        };
-        GhMainInstallListResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Main App installation rows. */
-                gh_app_installs: unknown[];
-            };
-        };
-        GhMainMetadataResponse: {
-            /** @description Response payload. */
-            data: {
-                ghAppMetadata: {
-                    /** @description GitHub App permissions. */
-                    permissions?: unknown;
-                    ghRepos: {
-                        id: number;
-                        node_id: string;
-                        name: string;
-                        full_name: string;
-                        private: boolean;
+                /** @description Whether the org can subscribe through Dodo now. */
+                available: boolean;
+                /**
+                 * @description Why not, when `available` is false.
+                 * @enum {string|null}
+                 */
+                reason: "not_configured" | "no_org" | "inr" | "has_plan" | "no_plan" | null;
+                /** @description The plan checkout would subscribe to, when available. */
+                plan: {
+                    /** @description Plan name, as shown to customers. */
+                    name: string;
+                    /** @description Currency of the prices below, e.g. `usd`. */
+                    currency: string;
+                    /** @description Monthly base price in cents of `currency`. */
+                    base_price_cents: number;
+                    /** @description Metered allowances and overage rates. */
+                    meters: {
+                        /** @description Meter key, e.g. `ai_credits` or `test_minutes`. */
+                        meter: string;
+                        /** @description Units included each month. */
+                        included_qty: number | null;
+                        /** @description Price per unit above the allowance, in cents of `currency`; may be fractional. */
+                        overage_price_cents: number | null;
                     }[];
-                    ghOrganization: string | null;
-                };
-            };
-        };
-        GhMainInstallResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The main App installation row. */
-                installation?: unknown;
-            };
-        };
-        GithubProxyError: {
-            /** @description Error message. */
-            error: string;
-        };
-        GithubWebhookAck: {
-            /** @description Response payload. */
-            data: {
-                /** @description Always true; the event was accepted for async processing. */
-                received: boolean;
-            };
-        };
-        JiraInstallationListResponse: {
-            /** @description Jira app installations for the organisation. */
-            data: components["schemas"]["JiraAppInstall"][];
-            /** @description Number of installations. */
-            count: number;
-        };
-        JiraAppInstall: {
-            /** @description Installation ID. */
-            id: number;
-            /** @description Organisation ID. */
-            org_id: number;
-            /** @description Atlassian cloud ID. */
-            jira_cloud_id: string;
-            /** @description Jira site base URL. */
-            jira_site_url: string;
-            /** @description Map of Jira project key to Empirical project ID. */
-            project_mappings: {
-                [key: string]: number;
-            } | null;
-            /** @description Access token expiry (ISO 8601). */
-            jira_access_token_expires_at: string;
-            /** @description Webhook expiry (ISO 8601), or null. */
-            webhook_expires_at: string | null;
-            /** @description When Jira OAuth reauthorization became required (ISO 8601), or null. */
-            reauthorization_required_at: string | null;
-            /** @description Machine-readable reason reauthorization is required. */
-            reauthorization_reason: string | null;
-            /** @description Creation timestamp (ISO 8601), or null. */
-            created_at: string | null;
-            /** @description Alias of `jira_access_token_expires_at` (ISO 8601). */
-            expires_at: string;
-            /** @description Whether the access token has not yet expired. */
-            is_active: boolean;
-        };
-        JiraInstallationResponse: {
-            /**
-             * @description Always true on success.
-             * @enum {boolean}
-             */
-            success: true;
-            data: components["schemas"]["JiraAppInstall"];
-        };
-        CreateJiraInstallationRequest: {
-            /** @description Organisation the installation belongs to. */
-            org_id: number;
-            /** @description Atlassian cloud ID of the Jira site. */
-            jira_cloud_id: string;
-            /**
-             * Format: uri
-             * @description Base URL of the Jira site.
-             */
-            jira_site_url: string;
-            /** @description OAuth access token. */
-            jira_access_token: string;
-            /** @description OAuth refresh token. */
-            jira_refresh_token: string;
-            /**
-             * Format: date-time
-             * @description Expiry timestamp of the access token.
-             */
-            jira_access_token_expires_at: string | null;
-            /** @description When true, register the Jira webhook after install. */
-            register_webhook?: boolean;
-        };
-        JiraSuccessResponse: {
-            /**
-             * @description Always true on success.
-             * @enum {boolean}
-             */
-            success: true;
-        };
-        JiraInstallationRecordResponse: {
-            /**
-             * @description Always true on success.
-             * @enum {boolean}
-             */
-            success: true;
-            /** @description The updated installation row, or null if not found. */
-            data: {
-                /** @description Installation ID. */
-                id: number;
-                /** @description Organisation ID. */
-                org_id: number;
-                /** @description Atlassian cloud ID. */
-                jira_cloud_id: string;
-                /** @description Jira site base URL. */
-                jira_site_url: string;
-                /** @description OAuth access token. */
-                jira_access_token: string;
-                /** @description OAuth refresh token. */
-                jira_refresh_token: string;
-                /** @description Access token expiry (ISO 8601). */
-                jira_access_token_expires_at: string;
-                /** @description Map of Jira project key to Empirical project ID. */
-                project_mappings: {
-                    [key: string]: number;
                 } | null;
-                /** @description Webhook expiry (ISO 8601), or null. */
-                webhook_expires_at: string | null;
-                /** @description When Jira OAuth reauthorization became required (ISO 8601), or null. */
-                reauthorization_required_at: string | null;
-                /** @description Machine-readable reason reauthorization is required. */
-                reauthorization_reason: string | null;
-                /** @description Creation timestamp (ISO 8601), or null. */
-                created_at: string | null;
-            } | null;
-        };
-        UpdateJiraProjectMappingsRequest: {
-            /** @description Map of Jira project key to Empirical project ID. */
-            project_mappings: {
-                [key: string]: number;
             };
         };
-        UpdateJiraWebhookExpiresAtRequest: {
-            /**
-             * Format: date-time
-             * @description New webhook expiry timestamp, or `null` to clear it.
-             */
-            webhook_expires_at: string | null;
+        SubscriptionPortalResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Short-lived Dodo customer portal session: update the card, download invoices. */
+                portal_url: string;
+            };
         };
-        JiraValidationResponse: {
-            /**
-             * @description Always true on success.
-             * @enum {boolean}
-             */
-            success: true;
-            /**
-             * @description Current state of the registered webhook.
-             * @enum {string}
-             */
-            webhookStatus: "active" | "expired" | "missing";
-            /** @description Webhook expiry (ISO 8601), or null. */
-            webhookExpiresAt: string | null;
+        SubscriptionUsageReconcileResponse: {
+            /** @description Response payload. */
+            data: {
+                subscription_id: string;
+                cycle_start: string;
+                cycle_end: string;
+                meters: {
+                    ai_credits: {
+                        /** @description Our usage in the cycle. */
+                        ours: number;
+                        /** @description What Dodo's events in the cycle add up to. */
+                        dodo: number;
+                        our_events: number;
+                        dodo_events: number;
+                    };
+                    test_minutes: {
+                        /** @description Our usage in the cycle. */
+                        ours: number;
+                        /** @description What Dodo's events in the cycle add up to. */
+                        dodo: number;
+                        our_events: number;
+                        dodo_events: number;
+                    };
+                };
+                /** @description Event ids of our usage rows that Dodo has no event for. */
+                missing: string[];
+                /** @description Dodo event ids in the cycle with no usage row of ours. */
+                extra: string[];
+                /** @description Events whose quantity differs from our usage row's (Dodo keeps the first quantity sent). */
+                changed: {
+                    event_id: string;
+                    ours: number;
+                    dodo: number;
+                }[];
+            };
         };
-        LinearInstallListResponse: {
-            /** @description Installations for the organization. */
-            data: components["schemas"]["LinearAppInstall"][];
-            /** @description Number of installations. */
-            count: number;
-        };
-        LinearAppInstall: {
-            /** @description Installation ID. */
+        SystemMessage: {
             id: number;
-            /** @description Organization ID. */
-            org_id: number;
-            /** @description Linear app user (actor) id. */
-            linear_app_user_id: string;
-            /** @description Linear organization id. */
-            linear_organization_id: string;
-            /** @description Map of Linear team key to Empirical project id. */
-            project_mappings: {
-                [key: string]: number;
-            };
-            /** @description ISO 8601 timestamp the installation was created. */
-            created_at: string | null;
-            /** @description ISO 8601 expiry of the stored access token. */
-            expires_at: string;
-            /** @description Whether the access token is still valid or can be refreshed. */
-            is_active: boolean;
-            /** @description Actor name (only when metadata is cached). */
-            linear_app_user_name?: string;
-            /** @description Organization name (only when metadata is cached). */
-            linear_organization_name?: string;
-            /** @description Organization URL key (only when metadata is cached). */
-            linear_organization_url_key?: string;
-            /** @description Linear teams (only when metadata is cached). */
-            teams?: components["schemas"]["LinearTeamRef"][];
+            body: string;
+            created_by: string | null;
+            created_at: string;
         };
-        LinearTeamRef: {
-            /** @description Linear team id. */
-            id: string;
-            /** @description Linear team key (e.g. "EMP"). */
-            key: string;
-            /** @description Linear team name. */
-            name: string;
-        };
-        LinearInstallCreateResponse: {
-            /** @description Always true when the installation was stored. */
-            success: boolean;
-            /** @description The created or reauthorized installation. */
+        SystemMessageDetailResponse: {
             data: {
-                /** @description Installation ID. */
-                id: number;
-                /** @description Organization ID. */
-                org_id: number;
-                /** @description Linear app user (actor) id. */
-                linear_app_user_id: string;
-                /** @description Linear organization id. */
-                linear_organization_id: string;
-                /** @description Map of Linear team key to Empirical project id. */
-                project_mappings: {
-                    [key: string]: number;
-                };
-                /** @description ISO 8601 timestamp the installation was created. */
-                created_at: string | null;
-                /** @description ISO 8601 expiry of the stored access token. */
-                expires_at: string;
-                /** @description Whether the access token is still valid or can be refreshed. */
-                is_active: boolean;
-                /** @description Actor name (only when metadata is cached). */
-                linear_app_user_name?: string;
-                /** @description Organization name (only when metadata is cached). */
-                linear_organization_name?: string;
-                /** @description Organization URL key (only when metadata is cached). */
-                linear_organization_url_key?: string;
-                /** @description Linear teams (only when metadata is cached). */
-                teams?: components["schemas"]["LinearTeamRef"][];
+                system_message: components["schemas"]["SystemMessage"];
+                recipients: components["schemas"]["SystemMessageRecipient"][];
             };
         };
-        LinearSuccessResponse: {
-            /** @description Always true when the operation succeeded. */
-            success: boolean;
-        };
-        LinearProjectMappingsResponse: {
-            /** @description Always true when the mappings were updated. */
-            success: boolean;
-            /** @description The updated installation, or null if it disappeared. */
+        SystemMessageListResponse: {
             data: {
-                /** @description Installation ID. */
-                id: number;
-                /** @description Organization ID. */
-                org_id: number;
-                /** @description Linear app user (actor) id. */
-                linear_app_user_id: string;
-                /** @description Linear organization id. */
-                linear_organization_id: string;
-                /** @description Map of Linear team key to Empirical project id. */
-                project_mappings: {
-                    [key: string]: number;
-                };
-                /** @description ISO 8601 timestamp the installation was created. */
-                created_at: string | null;
-                /** @description ISO 8601 expiry of the stored access token. */
-                expires_at: string;
-                /** @description Whether the access token is still valid or can be refreshed. */
-                is_active: boolean;
-                /** @description Actor name (only when metadata is cached). */
-                linear_app_user_name?: string;
-                /** @description Organization name (only when metadata is cached). */
-                linear_organization_name?: string;
-                /** @description Organization URL key (only when metadata is cached). */
-                linear_organization_url_key?: string;
-                /** @description Linear teams (only when metadata is cached). */
-                teams?: components["schemas"]["LinearTeamRef"][];
+                system_messages: components["schemas"]["SystemMessageSummary"][];
+            };
+        };
+        SystemMessageRecipient: {
+            project_id: number;
+            chat_session_id: number | null;
+            /** @enum {string} */
+            delivery_status: "pending" | "delivered" | "failed";
+            delivery_error: string | null;
+            delivered_at: string | null;
+            /** @enum {string|null} */
+            ack_status: "accepted" | "declined" | null;
+            ack_note: string | null;
+            acked_at: string | null;
+            acked_by_chat_session_id: number | null;
+            session_is_closed: boolean | null;
+        };
+        SystemMessageSummary: {
+            id: number;
+            body: string;
+            created_by: string | null;
+            created_at: string;
+            recipients: number;
+            delivered: number;
+            failed: number;
+            acked: number;
+        };
+        Task: {
+            /** @description Unique identifier for the task. */
+            id: number;
+            /** @description Project the task belongs to. */
+            project_id: number;
+            /** @description Task title. */
+            title: string;
+            /** @description Task description (Markdown). */
+            description: string;
+            status: components["schemas"]["TaskStatus"];
+            /** @description Where the task came from, e.g. `linear`, `jira`, `slack` or `dashboard`. */
+            source: string;
+            /** @description Identifier of the task in its source system. */
+            source_identifier: string;
+            /** @description User ID of the person the task is owed to. `null` only on tasks created before this was required. */
+            created_by: string | null;
+            /** @description ISO 8601 timestamp of when the task was created. */
+            created_at: string;
+            /** @description ISO 8601 timestamp of when the task was last updated. */
+            updated_at: string;
+        };
+        TaskChatSession: {
+            /** @description Chat session ID. */
+            id: number;
+            /** @description Session title, if generated. */
+            title: string | null;
+            /** @description Supabase user ID of the creator. */
+            created_by: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 last-update timestamp. */
+            updated_at: string;
+            /** @description Project ID. */
+            project_id: number;
+            /** @description Session mode (e.g. `chat`). */
+            mode: string;
+            /** @description Model used for the session. */
+            model: string | null;
+            /** @description Tests impacted by the session. */
+            impacted_tests: unknown[];
+            /** @description Whether the agent is awaiting user input. */
+            ask_user_for_input: boolean | null;
+            /** @description Langfuse trace ID for observability. */
+            langfuse_trace_id: string | null;
+            /** @description Whether the session is closed. */
+            is_closed: boolean;
+            /** @description Feature flags active for this session. */
+            feature_flags: string[];
+            /** @description Outboxed first message awaiting delivery. */
+            pending_first_message?: unknown;
+        };
+        TaskChatSessionWithUser: {
+            /** @description Chat session ID. */
+            id: number;
+            /** @description Session title, if generated. */
+            title: string | null;
+            /** @description Supabase user ID of the creator. */
+            created_by: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 last-update timestamp. */
+            updated_at: string;
+            /** @description Project ID. */
+            project_id: number;
+            /** @description Session mode (e.g. `chat`). */
+            mode: string;
+            /** @description Model used for the session. */
+            model: string | null;
+            /** @description Tests impacted by the session. */
+            impacted_tests: unknown[];
+            /** @description Whether the agent is awaiting user input. */
+            ask_user_for_input: boolean | null;
+            /** @description Langfuse trace ID for observability. */
+            langfuse_trace_id: string | null;
+            /** @description Whether the session is closed. */
+            is_closed: boolean;
+            /** @description Feature flags active for this session. */
+            feature_flags: string[];
+            /** @description Outboxed first message awaiting delivery. */
+            pending_first_message?: unknown;
+            /** @description Resolved details for the creating user, if available. */
+            created_by_user_detail?: {
+                /** @description User ID. */
+                id: string;
+                /** @description User email address. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description URL to user avatar image. */
+                picture: string;
             } | null;
         };
-        LinearValidateResponse: {
-            /** @description Validation result. */
+        TaskChatSessionsResponse: {
+            /** @description Null when no sessions exist. */
+            data: unknown;
+            /** @description Explanatory message when empty. */
+            message: string;
+        } | {
+            /** @description Chat sessions for the task. */
+            data: components["schemas"]["TaskChatSessionWithUser"][];
+        };
+        TaskListResponse: {
+            /** @description The page of tasks. */
             data: {
-                /** @description Always true when the token is valid. */
-                success: boolean;
-                /** @description Whether cached metadata was backfilled. */
-                backfilled: boolean;
+                tasks: components["schemas"]["TaskWithCreator"][];
             };
+            pagination: components["schemas"]["Pagination"];
         };
-        GithubRateLimitReportResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["GithubRateLimitReportEntry"][];
-        };
-        GithubRateLimitReportEntry: {
-            /**
-             * @description Which GitHub app the installation belongs to.
-             * @enum {string}
-             */
-            app_type: "main" | "reporter";
-            /** @description GitHub app installation ID, or null when unknown. */
-            installation_id?: string | null;
-            /** @description GitHub organization for reporter installations. */
-            gh_organization?: string | null;
-            /** @description Per-resource rate limits keyed by resource name. */
-            rate?: {
-                [key: string]: components["schemas"]["GithubRateResource"];
-            };
-            /** @description Error message when this installation could not be queried. */
-            error?: string;
-        };
-        GithubRateResource: {
-            /** @description Maximum requests allowed in the window. */
-            limit?: number;
-            /** @description Requests already consumed in the window. */
-            used?: number;
-            /** @description Requests remaining in the window. */
-            remaining?: number;
-            /** @description Unix epoch (seconds) when the window resets. */
-            reset?: number;
-            /** @description ISO 8601 timestamp derived from `reset`. */
-            reset_iso_datetime?: string;
-            /** @description Minutes from now until `reset`, rounded. */
-            reset_mins_from_now?: number;
-        } & {
-            [key: string]: unknown;
-        };
-        AnalyticsTestRunsResponse: {
+        TaskResponse: {
             /** @description Response payload. */
             data: {
-                daily: components["schemas"]["AnalyticsDaily"][];
-                summary: components["schemas"]["AnalyticsRunsSummary"];
+                task: components["schemas"]["TaskWithCreator"];
             };
         };
-        AnalyticsDaily: {
-            /** @description Date in YYYY-MM-DD format. */
-            date: string;
-            /** @description Total number of test runs on this date. */
-            run_count: number;
-            /** @description Number of passed test runs. */
-            passed_runs: number;
-            /** @description Number of failed test runs. */
-            failed_runs: number;
-            /** @description Number of test runs that errored. */
-            error_runs: number;
-            /** @description Number of cancelled test runs. */
-            cancelled_runs: number;
-            /** @description Number of reruns on this date. */
-            rerun_count: number;
-            /** @description Total number of tests executed. */
-            total_tests: number;
-            /** @description Number of passed tests. */
-            passed_tests: number;
-            /** @description Number of failed tests. */
-            failed_tests: number;
-            /** @description Number of failed tests after applying snoozes. */
-            failed_tests_after_snooze: number;
-            /** @description Number of flaky tests. */
-            flaky_tests: number;
-        };
-        AnalyticsRunsSummary: {
-            /** @description Total number of test runs in the period. */
-            total_runs: number;
-            /** @description Number of passed test runs. */
-            passed_runs: number;
-            /** @description Number of failed test runs. */
-            failed_runs: number;
-            /** @description Number of test runs that errored. */
-            error_runs: number;
-            /** @description Pass rate as a percentage (0-100). */
-            pass_rate: number;
-            /** @description Average number of tests per run. */
-            avg_tests_per_run: number;
-            /** @description Total number of reruns. */
-            rerun_count: number;
-            /** @description Rerun rate as a percentage (0-100). */
-            rerun_rate: number;
-        };
-        AnalyticsTestCountResponse: {
+        TaskSessionResponse: {
             /** @description Response payload. */
             data: {
-                daily: components["schemas"]["TestCountByDayEntry"][];
-                summary: components["schemas"]["TestCountSummary"];
+                chat_session: components["schemas"]["TaskChatSession"];
             };
         };
-        TestCountByDayEntry: {
-            /** @description Date in YYYY-MM-DD format. */
-            date: string;
-            /** @description Number of distinct test cases that ran on this date (skipped tests excluded). */
-            test_count: number;
-        };
-        TestCountSummary: {
-            /** @description Test count on the most recent day in the window. */
-            latest_count: number;
-            /** @description Test count on the first day in the window. */
-            first_count: number;
-            /** @description Absolute change between `first_count` and `latest_count`. */
-            change: number;
-            /** @description Percentage change (0-100) between first and latest day. */
-            change_percent: number;
-        };
-        AnalyticsErrorResponse: {
-            /** @description Human-readable error message. */
-            error: string;
-        };
-        AnalyticsTestCasesResponse: {
-            /** @description Response payload. */
-            data: {
-                test_cases: components["schemas"]["AnalyticsTestCase"][];
-                summary: components["schemas"]["AnalyticsTestCasesSummary"];
-            };
-        };
-        AnalyticsTestCase: {
-            /** @description Unique identifier for the test case. */
-            test_case_id: string;
-            /** @description Name of the test case. */
-            test_name: string;
-            /** @description File path of the test case. */
-            file_path: string;
-            /** @description Name of the project the test belongs to. */
-            project_name: string;
-            /** @description Array of tags associated with the test case. */
-            tags: string[];
-            /** @description ISO 8601 timestamp of the last time this test was run. */
-            last_run_at: string;
-            /** @description Aggregated metrics for this test case. */
-            metrics: {
-                /** @description Total number of runs for this test case. */
-                total_runs: number;
-                /** @description Number of times the test passed. */
-                pass_count: number;
-                /** @description Number of times the test failed. */
-                fail_count: number;
-                /** @description Number of times the test was flaky. */
-                flaky_count: number;
-                /** @description Pass rate as a percentage (0-100). */
-                pass_rate: number;
-                /** @description Fail rate as a percentage (0-100). */
-                fail_rate: number;
-                /** @description Flaky rate as a percentage (0-100). */
-                flaky_rate: number;
-            };
-            /** @description History of test executions for this test case. */
-            history: components["schemas"]["TestCaseHistoryEntry"][];
-        };
-        TestCaseHistoryEntry: {
-            /** @description ISO 8601 timestamp of the history entry. */
-            timestamp: string;
-            /** @description Test status for this entry: `pass`, `fail`, `flaky`, or `skip`. */
-            status: string;
-            /** @description ID of the test run this entry belongs to. */
-            test_run_id: string;
-            /** @description ID of the environment the test ran in. */
-            environment_id: string;
-            /** @description ISO 8601 timestamp of when the test executed. */
-            executed_at: string;
-            /** @description Total duration in milliseconds. */
-            duration_total: number;
-            /** @description Number of retries for this test execution. */
-            retries: number;
-        };
-        AnalyticsTestCasesSummary: {
-            /** @description Total number of test cases. */
-            total_test_cases: number;
-            /** @description Number of test cases that have execution history. */
-            test_cases_with_history: number;
-        };
-        OverlayDismissalSummaryResponse: {
-            /** @description Response payload. */
-            data: {
-                project: components["schemas"]["TelemetryProjectRef"];
-                summary: components["schemas"]["OverlayDismissalSummary"];
-            };
+        /**
+         * @description Moving a `draft` task to `open` starts an agent session. `closed` and `resolved` are terminal.
+         * @enum {string}
+         */
+        TaskStatus: "draft" | "open" | "in-review" | "closed" | "resolved";
+        TaskWithCreator: {
+            /** @description Unique identifier for the task. */
+            id: number;
+            /** @description Project the task belongs to. */
+            project_id: number;
+            /** @description Task title. */
+            title: string;
+            /** @description Task description (Markdown). */
+            description: string;
+            status: components["schemas"]["TaskStatus"];
+            /** @description Where the task came from, e.g. `linear`, `jira`, `slack` or `dashboard`. */
+            source: string;
+            /** @description Identifier of the task in its source system. */
+            source_identifier: string;
+            /** @description User ID of the person the task is owed to. `null` only on tasks created before this was required. */
+            created_by: string | null;
+            /** @description ISO 8601 timestamp of when the task was created. */
+            created_at: string;
+            /** @description ISO 8601 timestamp of when the task was last updated. */
+            updated_at: string;
+            /** @description Details of the creating user, when known. */
+            created_by_user_detail?: {
+                /** @description User ID. */
+                id: string;
+                /** @description User email address. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description URL to user avatar image. */
+                picture: string;
+            } | null;
         };
         TelemetryProjectRef: {
             /** @description Project ID. */
@@ -9530,102 +13944,71 @@ export interface components {
             /** @description Repository name backing the project. */
             repo_name: string | null;
         };
-        OverlayDismissalSummary: {
-            /** @description Total overlay-dismissal events in the window. */
-            total: number;
-            /** @description Number of successful dismissals. */
-            success_count: number;
-            /** @description Success rate as a percentage (0-100). */
-            success_rate: number;
-            /** @description Number of dismissals served from cache. */
-            cache_hit_count: number;
-            /** @description Cache-hit rate as a percentage (0-100). */
-            cache_hit_rate: number;
-            /** @description Average dismissal duration in milliseconds. */
-            avg_duration_ms: number;
-            /** @description Total cost across all dismissals. */
-            total_cost: number;
-        };
-        OverlayDismissalEventsResponse: {
-            /** @description Project reference and the page of events. */
-            data: {
-                project: components["schemas"]["TelemetryProjectRef"];
-                /** @description The page of overlay-dismissal events. */
-                events: components["schemas"]["OverlayDismissalEvent"][];
+        TelemetryTrackRequest: {
+            /**
+             * @description Event name. Only test-run events are accepted.
+             * @enum {string}
+             */
+            name: "git.clone_build" | "llm_response_generated" | "overlay.dismissed" | "test_worker.interrupted" | "test_worker.segment.report_download" | "test_worker.segment.report_merge_and_upload" | "test_worker.segment.report_upload" | "test_worker.segment.tests_execute";
+            /** @description Event properties, forwarded as-is. */
+            properties: {
+                [key: string]: unknown;
             };
-            pagination: components["schemas"]["Pagination"];
+            /**
+             * Format: date-time
+             * @description When the event happened (ISO 8601). Default now.
+             */
+            timestamp?: string;
         };
-        OverlayDismissalEvent: {
-            /** @description ISO 8601 timestamp of the event. */
-            timestamp: string;
-            /** @description Environment the test ran in. */
-            environment: string | null;
-            /** @description Repository the test belongs to. */
-            repo_name: string | null;
-            /** @description Project name. */
-            project_name: string | null;
-            /** @description ID of the test run. */
-            test_run_id: string | null;
-            /** @description Name of the test. */
-            test_name: string | null;
-            /** @description Whether the dismissal succeeded. */
-            success: boolean | null;
-            /** @description Whether the result was served from cache. */
-            cache_hit: boolean | null;
-            /** @description Dismissal duration in milliseconds. */
-            duration_ms: number | null;
-            /** @description Description of the dismissed overlay. */
-            overlay_description: string | null;
-            /** @description Visible text of the dismissed overlay. */
-            overlay_text: string | null;
-            /** @description Original locator that was occluded. */
-            original_locator: string | null;
-            /** @description Input tokens consumed. */
-            tokens_input: number | null;
-            /** @description Output tokens produced. */
-            tokens_output: number | null;
-            /** @description Cost of input tokens. */
-            cost_input: number | null;
-            /** @description Cost of output tokens. */
-            cost_output: number | null;
-        };
-        AnalyticsTestCasesV2Response: {
+        TelemetryTrackResponse: {
             /** @description Response payload. */
             data: {
-                test_cases: components["schemas"]["AnalyticsTestCaseV2"][];
-                summary: components["schemas"]["AnalyticsTestCasesSummary"];
+                /** @enum {boolean} */
+                ok: true;
             };
         };
-        AnalyticsTestCaseV2: {
-            /** @description Unique identifier for the test case. */
-            test_case_id: string;
-            /** @description Name of the test case. */
-            test_name: string;
+        TestCase: {
+            /** @description Playwright test ID (pw_test_id), a 41-character hash that uniquely identifies the test. */
+            id: string;
+            /** @description Test case name. */
+            name: string;
             /** @description File path of the test case. */
             file_path: string;
-            /** @description Name of the project the test belongs to. */
-            project_name: string;
-            /** @description Array of tags associated with the test case. */
+            /** @description Array of suite names the test belongs to. */
+            suites: string[];
+            /** @description Playwright project name. */
+            playwright_project: string;
+            /** @description Array of tags assigned to the test case. */
             tags: string[];
-            /** @description ISO 8601 timestamp of the last time this test was run. */
-            last_run_at: string;
-            /** @description Aggregated metrics for this test case. */
-            metrics: {
-                /** @description Total number of runs for this test case. */
-                total_runs: number;
-                /** @description Number of times the test passed. */
-                pass_count: number;
-                /** @description Number of times the test failed. */
-                fail_count: number;
-                /** @description Number of times the test was flaky. */
-                flaky_count: number;
-                /** @description Pass rate as a percentage (0-100). */
-                pass_rate: number;
-                /** @description Fail rate as a percentage (0-100). */
-                fail_rate: number;
-                /** @description Flaky rate as a percentage (0-100). */
-                flaky_rate: number;
-            };
+            /** @description ISO 8601 timestamp. */
+            created_at: string;
+            /** @description ISO 8601 timestamp. */
+            updated_at: string;
+            /** @description Commit SHA where this test case was first seen. Null if not available. */
+            first_seen_commit_sha: string | null;
+            /** @description Commit SHA where this test case was last seen. Null if not available. */
+            last_seen_commit_sha: string | null;
+            dependencies: components["schemas"]["TestCaseV2Dependencies"];
+        };
+        TestCaseHistoryBatchRequest: {
+            /** @description Test case IDs to fetch history for (non-empty). */
+            test_case_ids: string[];
+            /** @description Project ID (ignored; the project comes from auth scope). */
+            project_id?: number;
+            /** @description Number of days of history (1-90, default 30). Ignored when `start_date` and `end_date` are set. */
+            days?: number;
+            /** @description Start of a custom date range (ISO 8601). */
+            start_date?: string;
+            /** @description End of a custom date range (ISO 8601). */
+            end_date?: string;
+            /** @description Filter by environment ID. */
+            environment_id?: string;
+            /** @description Maximum history entries returned per test case (1-1000, default 50). */
+            limit_per_test_case?: number;
+            /** @description When true, also return the most recent passing run per environment for each requested test case. */
+            include_last_pass_per_env?: boolean;
+        } & {
+            [key: string]: unknown;
         };
         TestCaseHistoryBatchResponse: {
             /** @description Response payload. */
@@ -9661,6 +14044,22 @@ export interface components {
                 truncated_test_case_ids: string[];
             };
         };
+        TestCaseHistoryEntry: {
+            /** @description ISO 8601 timestamp of the history entry. */
+            timestamp: string;
+            /** @description Test status for this entry: `pass`, `fail`, `flaky`, or `skip`. */
+            status: string;
+            /** @description ID of the test run this entry belongs to. */
+            test_run_id: string;
+            /** @description ID of the environment the test ran in. */
+            environment_id: string;
+            /** @description ISO 8601 timestamp of when the test executed. */
+            executed_at: string;
+            /** @description Total duration in milliseconds. */
+            duration_total: number;
+            /** @description Number of retries for this test execution. */
+            retries: number;
+        };
         TestCaseHistoryUnknownFieldsError: {
             /** @description Human-readable error message. */
             error: string;
@@ -9669,190 +14068,18 @@ export interface components {
             /** @description Field names that are allowed. */
             allowed_fields: string[];
         };
-        TestCaseHistoryBatchRequest: {
-            /** @description Test case IDs to fetch history for (non-empty). */
-            test_case_ids: string[];
-            /** @description Project ID (ignored; the project comes from auth scope). */
-            project_id?: number;
-            /** @description Number of days of history (1-90, default 30). Ignored when `start_date` and `end_date` are set. */
-            days?: number;
-            /** @description Start of a custom date range (ISO 8601). */
-            start_date?: string;
-            /** @description End of a custom date range (ISO 8601). */
-            end_date?: string;
-            /** @description Filter by environment ID. */
-            environment_id?: string;
-            /** @description Maximum history entries returned per test case (1-1000, default 50). */
-            limit_per_test_case?: number;
-            /** @description When true, also return the most recent passing run per environment for each requested test case. */
-            include_last_pass_per_env?: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        LastPassPerEnvResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["LastPassPerEnvEntry"][];
-        };
-        LastPassPerEnvEntry: {
-            /** @description Environment ID the test last passed in. */
-            environment_id: string;
-            /** @description ID of the test run in which it last passed. */
-            test_run_id: string;
-            /** @description Epoch timestamp (ms) of the last passing run. */
-            executed_at: number;
-        };
-        LastPassPerEnvRequest: {
-            /** @description Test case ID to look up. */
-            test_case_id: string;
-            /** @description Project ID (ignored; the project comes from auth scope). */
-            project_id?: number;
-            /** @description Look-back window in days (default 30). */
-            days?: number;
-            /** @description Anchor the lookup to this point in time (ISO 8601); returns the last pass as of then. */
-            before?: string;
-        };
-        ProjectUsageV2Response: {
-            /** @description Response payload. */
-            data: {
-                project_id: number;
-                /** @description Window start actually used (ISO 8601, UTC). */
-                start_date: string;
-                /** @description Window end actually used (ISO 8601, UTC). */
-                end_date: string;
-                ai_usage: {
-                    by_type: components["schemas"]["ProjectAiUsageByType"][];
-                    by_day: components["schemas"]["ProjectDailyAiUsage"][];
-                };
-                test_usage: {
-                    /** @description Sum of all attempt durations for completed non-skipped tests, in milliseconds. */
-                    duration_ms: number;
-                    by_day: components["schemas"]["ProjectDailyTestUsage"][];
-                    by_day_and_environment: components["schemas"]["ProjectDailyTestUsageByEnvironment"][];
-                };
-            };
-        };
-        ProjectAiUsageByType: {
-            type: components["schemas"]["AiUsageType"];
-            sessions: number;
-            /** @description Input, output, cache-read, and cache-write tokens combined. */
-            tokens: number;
-            credits: number;
-        };
-        /** @enum {string} */
-        AiUsageType: "manager" | "manager_initiated" | "user_initiated" | "triage";
-        ProjectDailyAiUsage: {
-            /** @description UTC date (YYYY-MM-DD). */
-            date: string;
-            type: components["schemas"]["AiUsageType"];
-            credits: number;
-        };
-        ProjectDailyTestUsage: {
-            /** @description UTC date (YYYY-MM-DD). */
-            date: string;
-            duration_ms: number;
-        };
-        ProjectDailyTestUsageByEnvironment: {
-            /** @description UTC date (YYYY-MM-DD). */
-            date: string;
-            duration_ms: number;
-            environment_id: number | null;
-            environment_name: string | null;
-        };
-        SlackChannelListV2Response: {
-            data: {
-                channels: components["schemas"]["SlackChannelV2"][];
-            };
-        };
-        SlackChannelV2: {
-            /** @description Canonical Slack channel ID. */
-            id: number;
-            /** @description Organization scope ID. */
-            org_id: number;
-            /** @description Slack app installation ID, or null for the shared default installation. */
-            slack_app_install_id: number | null;
-            /**
-             * @description Credential source used to access the Slack workspace.
-             * @enum {string}
-             */
-            installation_source: "default" | "org";
-            /** @description Slack workspace (team) ID. */
-            team_id: string;
-            /** @description Slack channel ID. */
-            channel_id: string;
-            /** @description Last known Slack channel name. */
-            channel_name: string | null;
-            /** @description ISO 8601 archival timestamp. */
-            archived_at: string | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 update timestamp. */
-            updated_at: string;
-        };
-        SlackChannelValidationListV2Response: {
-            data: {
-                channels: components["schemas"]["ValidatedSlackChannelV2"][];
-            };
-        };
-        ValidatedSlackChannelV2: {
-            /** @description Canonical Slack channel ID. */
-            id: number;
-            /** @description Organization scope ID. */
-            org_id: number;
-            /** @description Slack app installation ID, or null for the shared default installation. */
-            slack_app_install_id: number | null;
-            /**
-             * @description Credential source used to access the Slack workspace.
-             * @enum {string}
-             */
-            installation_source: "default" | "org";
-            /** @description Slack workspace (team) ID. */
-            team_id: string;
-            /** @description Slack channel ID. */
-            channel_id: string;
-            /** @description Last known Slack channel name. */
-            channel_name: string | null;
-            /** @description ISO 8601 archival timestamp. */
-            archived_at: string | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 update timestamp. */
-            updated_at: string;
-            /** @description Live Slack validation result. */
-            slack_channel_validation: {
-                /** @description Whether the bot can read the channel and its stored name matches Slack. */
-                ok: boolean;
-                /** @description Slack channel ID. */
-                channel_id: string;
-                /** @description Whether the bot can read the channel through Slack. */
-                can_access: boolean;
-                /** @description Whether the bot can read the channel. */
-                is_member?: boolean;
-                /** @description Current channel name returned by Slack. */
-                current_channel_name?: string | null;
-                /** @description Whether the stored channel name matches Slack's current name. */
-                channel_name_matches?: boolean;
-                /** @description Machine-readable validation failure code. */
-                error_code?: string;
-                /** @description Human-readable validation result. */
-                message?: string;
-            };
-        };
-        SlackChannelRefreshV2Response: {
-            data: {
-                channel: components["schemas"]["ValidatedSlackChannelV2"];
-                /** @description Whether the stored channel name was replaced with Slack's current name. */
-                renamed: boolean;
-                /** @description Channel name stored before the refresh. */
-                previous_channel_name: string | null;
-            };
-        };
-        TestCaseTagsResponse: {
-            /** @description Distinct tags across the project's test cases. */
-            tags: string[];
-        };
-        TestCasePlaywrightProjectsResponse: {
-            /** @description Distinct Playwright projects across the project's synced test cases. */
-            playwright_projects: string[];
+        /** @description Pagination metadata. */
+        TestCaseListPagination: {
+            /** @description Current page (1-indexed). */
+            page: number;
+            /** @description Items per page. */
+            per_page: number;
+            /** @description Total number of items. */
+            total: number;
+            /** @description Total number of pages. */
+            total_pages: number;
+            /** @description Whether more pages exist beyond the current one. */
+            has_more: boolean;
         };
         TestCaseListResponse: {
             /** @description Test cases plus the project's sync status. */
@@ -9869,28 +14096,83 @@ export interface components {
             };
             pagination: components["schemas"]["TestCaseListPagination"];
         };
-        TestCase: {
-            /** @description Playwright test ID (pw_test_id), a 41-character hash that uniquely identifies the test. */
-            id: string;
-            /** @description Test case name. */
+        TestCasePlaywrightProjectsResponse: {
+            /** @description Distinct Playwright projects across the project's synced test cases. */
+            playwright_projects: string[];
+        };
+        TestCaseRunEndAttachment: {
             name: string;
-            /** @description File path of the test case. */
-            file_path: string;
-            /** @description Array of suite names the test belongs to. */
+            path: string;
+            contentType: string;
+            url: string;
+        };
+        TestCaseRunEndEventRequest: {
+            /**
+             * @description Event name, e.g. `test_case_run_end`.
+             * @enum {string}
+             */
+            name?: "test_case_run_end";
+            data: components["schemas"]["TestCaseRunEndEventV2"];
+        };
+        TestCaseRunEndEventV2: {
+            runId: string;
+            test: components["schemas"]["TestCaseRunEndPayloadTest"];
             suites: string[];
-            /** @description Playwright project name. */
-            playwright_project: string;
-            /** @description Array of tags assigned to the test case. */
+            result: components["schemas"]["TestCaseRunEndPayloadResult"];
+            projectName: string;
+            attachments: components["schemas"]["TestCaseRunEndAttachment"][];
+            failingLine?: string;
+            shardIndex?: number;
+            maxFailures?: number;
+        };
+        TestCaseRunEndPayloadAnnotation: {
+            type: string;
+            description?: string;
+        };
+        TestCaseRunEndPayloadError: {
+            message?: string;
+            stack?: string;
+            location?: components["schemas"]["TestCaseRunEndPayloadLocation"];
+        };
+        TestCaseRunEndPayloadLocation: {
+            file: string;
+            line: number;
+            column: number;
+        };
+        TestCaseRunEndPayloadResult: {
+            retry: number;
+            status: components["schemas"]["TestCaseRunEndPayloadStatus"];
+            duration: number;
+            startTime: string;
+            error?: components["schemas"]["TestCaseRunEndPayloadError"];
+            errors?: components["schemas"]["TestCaseRunEndPayloadError"][];
+            annotations?: components["schemas"]["TestCaseRunEndPayloadAnnotation"][];
+        };
+        /** @enum {string} */
+        TestCaseRunEndPayloadStatus: "passed" | "failed" | "timedOut" | "skipped" | "interrupted";
+        TestCaseRunEndPayloadTest: {
+            id: string;
+            title: string;
+            location: components["schemas"]["TestCaseRunEndPayloadLocation"];
+            expectedStatus: components["schemas"]["TestCaseRunEndPayloadStatus"];
+            retries: number;
+        };
+        TestCaseTagsResponse: {
+            /** @description Distinct tags across the project's test cases. */
             tags: string[];
-            /** @description ISO 8601 timestamp. */
-            created_at: string;
-            /** @description ISO 8601 timestamp. */
-            updated_at: string;
-            /** @description Commit SHA where this test case was first seen. Null if not available. */
-            first_seen_commit_sha: string | null;
-            /** @description Commit SHA where this test case was last seen. Null if not available. */
-            last_seen_commit_sha: string | null;
-            dependencies: components["schemas"]["TestCaseV2Dependencies"];
+        };
+        TestCaseTagsUpdateResponse: {
+            /** @description The updated test case. */
+            data: {
+                test_case: components["schemas"]["TestCase"];
+                /** @description Whether the source file was updated with the new tags. */
+                source_file_updated: boolean;
+            };
+            /** @description Present alongside a non-null `data` only when the update partially failed (e.g. the source file could not be updated). */
+            error?: {
+                /** @description Error message describing why the update partially failed. */
+                message: string;
+            };
         };
         /** @description Dependency-group metadata for a test case (e.g. Playwright serial groups). Empty object when the test has no dependencies. */
         TestCaseV2Dependencies: {
@@ -9912,62 +14194,391 @@ export interface components {
                 depends_on: string[];
             };
         };
-        /** @description Pagination metadata. */
-        TestCaseListPagination: {
-            /** @description Current page (1-indexed). */
-            page: number;
-            /** @description Items per page. */
-            per_page: number;
-            /** @description Total number of items. */
-            total: number;
-            /** @description Total number of pages. */
-            total_pages: number;
-            /** @description Whether more pages exist beyond the current one. */
-            has_more: boolean;
-        };
-        GetTestCaseResponse: {
+        TestCasesSyncTriggeredResponse: {
             /** @description Response payload. */
             data: {
-                test_case: components["schemas"]["TestCase"];
+                /** @description Whether the sync job was enqueued. */
+                triggered: boolean;
+                /** @description Commit SHA the sync was enqueued for. */
+                commit_sha: string;
             };
         };
-        TestCaseTagsUpdateResponse: {
-            /** @description The updated test case. */
+        TestCountByDayEntry: {
+            /** @description Date in YYYY-MM-DD format. */
+            date: string;
+            /** @description Number of distinct test cases that ran on this date (skipped tests excluded). */
+            test_count: number;
+        };
+        TestCountSummary: {
+            /** @description Test count on the most recent day in the window. */
+            latest_count: number;
+            /** @description Test count on the first day in the window. */
+            first_count: number;
+            /** @description Absolute change between `first_count` and `latest_count`. */
+            change: number;
+            /** @description Percentage change (0-100) between first and latest day. */
+            change_percent: number;
+        };
+        TestRunBranchListResponse: {
+            /** @description Response payload. */
             data: {
-                test_case: components["schemas"]["TestCase"];
-                /** @description Whether the source file was updated with the new tags. */
-                source_file_updated: boolean;
+                /** @description Branch names with recent test runs. */
+                branches: string[];
             };
-            /** @description Present alongside a non-null `data` only when the update partially failed (e.g. the source file could not be updated). */
+        };
+        TestRunCase: {
+            /** @description Playwright test ID; the case's URL id. Null for a ledger row that never matched a scheduled entry. */
+            pw_test_id: string | null;
+            /** @description Shard index (1+) for a sharded run; null for a non-sharded run. */
+            shard_index: number | null;
+            /** @description ID of the parent test run. */
+            test_run_id: string;
+            /**
+             * @description Outcome of the case. Provisional while `is_retrying` is true.
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "flaky" | "skipped";
+            /** @description True when the case has retries outstanding: `status`, `retries` and `retry_details` reflect only the attempts so far. Only returned with `include_retrying=true`. */
+            is_retrying: boolean;
+            /** @description Run-time path `[file, ...suites, title]`. */
+            nesting: string[];
+            /** @description Playwright project the case ran under. */
+            test_project: string | null;
+            /** @description Number of retries; null when not recorded. */
+            retries: number | null;
+            /** @description Total duration in milliseconds. */
+            total_duration: number | null;
+            /** @description Expected (7-day average) duration in ms. */
+            expected_duration_ms: number | null;
+            /** @description Raw Playwright retry details; null if absent. */
+            retry_details: {
+                /** @description Per-attempt retry details. */
+                retries: components["schemas"]["TestRunCaseRetryDetail"][];
+            } | null;
+            /** @description Failing source line derived from retry details. */
+            failing_line: string | null;
+            /** @description ISO 8601 test completion time from the run ledger. */
+            created_at: string | null;
+            /** @description SHA of the last commit before the run started. */
+            last_commit_before_run_started_at: string | null;
+            /** @description Snoozes matching this case at read time. */
+            snooze_info: components["schemas"]["TestRunCaseSnoozeInfo"][];
+            /** @description Attempts that never ran because an earlier member of this case's Playwright serial group failed on the same attempt. Null when the case is not in a snapshotted group or when nothing was blocked. */
+            skipped_attempts: components["schemas"]["TestRunCaseSkippedAttempt"][] | null;
+        };
+        TestRunCaseRetryDetail: {
+            /** @description Zero-based retry attempt index. */
+            retryIndex: number;
+            /**
+             * @description Outcome of this attempt.
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "timedOut" | "skipped" | "interrupted";
+            /** @description Status Playwright expected for the test. */
+            expectedStatus: string;
+            /** @description Attempt duration in milliseconds. */
+            duration: number;
+            /** @description ISO 8601 start time of the attempt. */
+            startTime: string;
+            /** @description Error detail when the attempt failed. */
             error?: {
-                /** @description Error message describing why the update partially failed. */
+                /** @description Error message. */
                 message: string;
+                /** @description Error stack trace. */
+                stack: string;
+                /** @description Source location of the failure. */
+                location?: {
+                    /** @description Source file. */
+                    file: string;
+                    /** @description Line number. */
+                    line: number;
+                    /** @description Column number. */
+                    column: number;
+                };
+            };
+            /** @description Attachments captured for the attempt. */
+            attachments?: {
+                /** @description Attachment name. */
+                name: string;
+                /** @description Attachment storage path. */
+                path: string;
+                /** @description Attachment MIME type. */
+                contentType: string;
+                /** @description Attachment URL. */
+                url: string;
+            }[];
+            /** @description Source line that failed, if known. */
+            failingLine?: string;
+            /** @description Playwright annotations for the attempt (static + runtime). Absent on rows recorded before annotations were captured. */
+            annotations?: {
+                /** @description Annotation type. */
+                type: string;
+                /** @description Annotation description, if any. */
+                description?: string;
+            }[];
+        };
+        TestRunCaseSkippedAttempt: {
+            /** @description Attempt index this explains. */
+            retry_index: number;
+            /** @description The serial-group member that blocked this attempt. */
+            blocked_by: {
+                /** @description Playwright test id of the blocking test. */
+                pw_test_id: string | null;
+                /** @description Title of the blocking test. */
+                name: string;
+                /** @description The blocking test's outcome on this attempt. */
+                status: string;
             };
         };
-        UpdateTestCaseTagsRequest: {
-            /** @description Array of tags to assign to the test case. */
-            tags: string[];
+        TestRunCaseSnoozeInfo: {
+            /** @description ID of the matching snooze. */
+            snooze_id: number;
+            /** @description Snooze description. */
+            description: string | null;
+            /** @description User ID that created the snooze. */
+            created_by: string | null;
+            /** @description Avatar URL of the snooze creator. */
+            created_by_picture: string | null;
+            /** @description ISO 8601 expiry of the snooze. */
+            snooze_until: string | null;
+            /** @description ISO 8601 creation time of the snooze. */
+            created_at: string | null;
+            /**
+             * @description Why this snooze matched the case.
+             * @enum {string}
+             */
+            match_reason: "window" | "originating_run";
+            /** @description Environment the snooze is scoped to, if any. */
+            scoped_to_environment_id: number | null;
         };
-        TestRunsListResponse: {
+        TestRunChatSession: {
+            /** @description Chat session ID. */
+            id: number;
+            /** @description Session title. */
+            title: string | null;
+            /** @description Creator user ID. */
+            created_by: string | null;
+            /** @description Creation timestamp (ISO). */
+            created_at: string;
+            /** @description Last update timestamp (ISO). */
+            updated_at: string;
+            /** @description Owning project ID. */
+            project_id: number;
+            /** @description Hive agent ref the session runs (`<name>` or `<name>@<version>`). The legacy values `chat` and `triage` mean the default agent, `main`. */
+            mode: string;
+            /**
+             * @description Workload class, assigned server-side; null for an ordinary user chat. Read-only — no request body accepts it.
+             * @enum {string|null}
+             */
+            purpose?: "triage" | "manager" | null;
+            /** @description Requested model. */
+            model: string | null;
+            /** @description Whether the agent is awaiting user input. */
+            ask_user_for_input: boolean | null;
+            /** @description Langfuse trace ID. */
+            langfuse_trace_id: string | null;
+            /** @description Whether the session is closed. */
+            is_closed: boolean;
+            /** @description For a manager closed by rollover, the manager session that took over. */
+            superseded_by_session_id: number | null;
+            /** @description The session this one was spawned from: the agent session that delegated it, or the manager it took over from. */
+            parent_chat_session_id?: number | null;
+            /**
+             * @description How this session came from its parent.
+             * @enum {string|null}
+             */
+            parent_relationship?: "delegation" | "manager_handoff" | null;
+            /** @description Feature flags enabled for the session. */
+            feature_flags: string[];
+            /** @description Resolved Supabase details for the creator. */
+            created_by_user_detail?: {
+                /** @description Supabase user ID. */
+                id: string;
+                /** @description User email. */
+                email: string;
+                /** @description Display name. */
+                name: string;
+                /** @description Avatar URL. */
+                picture: string;
+            } | null;
+            /** @description Number of the session's most recently updated PR, if any. */
+            pr_number: number | null;
+            /**
+             * @description Status of the session's most recently updated PR ('unopened' when it has none).
+             * @enum {string}
+             */
+            pr_status: "unopened" | "open" | "opened" | "closed" | "merged";
+            /** @description Name of the owning project. */
+            project_name: string | null;
+            /** @description Repository name of the owning project. */
+            project_repo_name: string | null;
+            /** @description Repository owner of the owning project. */
+            project_repo_owner: string | null;
+            /** @description Tests in this run the session is scoped to; empty when the session is about the whole run (triage). */
+            linked_pw_test_ids: string[];
+        };
+        TestRunDetail: {
+            /** @description Unique identifier. */
+            id: number;
+            /**
+             * @description Current state of the test run.
+             * @enum {string}
+             */
+            state: "pending" | "queued" | "started" | "ended" | "error" | "cancelled" | "cancelling";
+            /** @description Total number of test cases. */
+            total_count: number;
+            /** @description Number of passed tests. */
+            success_count: number;
+            /** @description Number of failed tests. */
+            failed_count: number;
+            /** @description Number of skipped tests. */
+            skipped_count: number | null;
+            /** @description Number of flaky tests. */
+            flaky_count: number | null;
+            /** @description Duration in milliseconds. */
+            duration: number | null;
+            /** @description Git branch being tested. */
+            test_run_branch: string | null;
+            /** @description Environment identifier. */
+            environment_slug: string | null;
+            /** @description Environment display name. */
+            environment_name: string | null;
+            /** @description URL of the deployment tested, i.e. the run's resolved `BUILD_URL` environment variable. */
+            build_url: string | null;
+            /** @description Git branch of the build. */
+            build_branch: string | null;
+            /** @description Commit SHA. */
+            commit: string | null;
+            /** @description ISO 8601 timestamp. */
+            created_at: string;
+            /** @description Concurrency group and policy the run was created with, or null when no limit applied. */
+            concurrency: {
+                /** @description Concurrency group the run was scoped to. Runs in the same group are limited to one in progress at a time. */
+                group: string;
+                /**
+                 * @description What this run did when the group already had an active run: `cancel` cancelled it, `wait` queued behind it.
+                 * @enum {string}
+                 */
+                on_conflict: "cancel" | "wait";
+            } | null;
+            /** @description Git commit SHA. */
+            test_run_head_sha: string | null;
+            /** @description ISO 8601 timestamp when tests started. */
+            run_started_at: string | null;
+            /** @description ISO 8601 timestamp when tests ended. */
+            run_ended_at: string | null;
+            /** @description URL to download the Playwright JSON report for this run. */
+            summary_url: string | null;
+            /** @description Branch-resolution provenance. Null only for historical runs created before provenance was recorded. */
+            test_code: {
+                requested: {
+                    branch: string;
+                    /** @enum {string} */
+                    source: "explicit" | "build" | "project_default" | "legacy";
+                    /** @enum {string} */
+                    if_missing: "error" | "use_default" | "create";
+                };
+                resolved: {
+                    branch: string | null;
+                    sha: string | null;
+                    /** @enum {string|null} */
+                    fallback_reason: "requested_branch_missing" | null;
+                };
+                execution: {
+                    ref: string | null;
+                    sha: string | null;
+                    /** @enum {string|null} */
+                    ref_kind: "branch" | "temporary_merge" | null;
+                };
+                merge_base: {
+                    branch: string;
+                    sha: string | null;
+                } | null;
+                /** @enum {string} */
+                resolution_status: "pending" | "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
+                resolution_error_code: string | null;
+            } | null;
+            /** @description The `trigger` the run was created with, or null when none was sent. */
+            trigger: {
+                /**
+                 * @description Event that produced the run.
+                 * @enum {string}
+                 */
+                event: "pull_request";
+                /** @description Pull request under test. */
+                pull_request: {
+                    /** @description Pull request number in the application repository. */
+                    number?: number;
+                    /** @description Head branch. */
+                    head: string;
+                    /** @description Base branch. */
+                    base: string;
+                };
+            } | null;
+        };
+        TestRunEnvironmentVariable: {
+            /** @description Variable ID (0 for run-level overrides). */
+            id: number;
+            /** @description Owning project ID. */
+            project_id: number;
+            /** @description Variable name. */
+            name: string;
+            /** @description Variable description. */
+            description: string;
+            /** @description Variable value. */
+            value: string;
+            /** @description ISO 8601 timestamp the variable was created. */
+            created_at: string;
+            /** @description ISO 8601 timestamp the variable was last updated. */
+            updated_at: string;
+            /** @description User ID who last updated the variable. */
+            updated_by: string | null;
+            /** @description Whether the variable applies to all environments. */
+            all_environments: boolean;
+            /** @description Environment IDs the variable is scoped to. */
+            environment_ids: number[];
+        };
+        TestRunEnvironmentVariablesResponse: {
+            /** @description Response payload. */
             data: {
-                /** @description The project the runs belong to. */
-                project: {
-                    /** @description Project ID. */
-                    id: number;
-                    /** @description Project name. */
-                    name: string;
-                    /** @description Project slug. */
-                    slug: string;
-                    /** @description Repository name for the project. */
-                    repo_name: string;
-                };
-                /** @description Paginated test runs. */
-                test_runs: {
-                    /** @description The page of test runs. */
-                    items: components["schemas"]["TestRunItem"][];
-                };
+                /** @description Resolved environment variables for the run. */
+                environment_variables: components["schemas"]["TestRunEnvironmentVariable"][];
             };
-            pagination: components["schemas"]["Pagination"];
+        };
+        TestRunHistoryChartItem: {
+            /** @description Test run ID. */
+            id: number;
+            /** @description Run state. */
+            state: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string | null;
+            /** @description Total number of tests. */
+            total_count: number | null;
+            /** @description Number of passed tests. */
+            success_count: number | null;
+            /** @description Number of failed tests. */
+            failed_count: number | null;
+            /** @description Failed tests remaining after snoozes applied. */
+            failed_count_after_snoozing: number | null;
+            /** @description Number of flaky tests. */
+            flaky_count: number | null;
+            /** @description Environment ID the run executed against. */
+            environment_id: number | null;
+            /** @description Environment name. */
+            environment_name: string | null;
+            /** @description Environment slug. */
+            environment_slug: string | null;
+            /** @description Error code when the run failed. */
+            error_code: string | null;
+            /** @description ID of the run this run is a rerun of, if any. */
+            rerun_source_id: number | null;
+        };
+        TestRunHistoryChartResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Test runs ordered newest first. */
+                items: components["schemas"]["TestRunHistoryChartItem"][];
+            };
         };
         TestRunItem: {
             /** @description Unique identifier. */
@@ -10014,130 +14625,121 @@ export interface components {
                 on_conflict: "cancel" | "wait";
             } | null;
         };
-        CreateTestRunResponse: {
-            data: {
-                trigger: {
-                    /** @description Whether the test run was triggered successfully. */
-                    success: boolean;
-                };
-                test_run: {
-                    /** @description Unique identifier for the test run. */
-                    id: number;
-                    /** @description Current state of the test run. */
-                    state: string;
-                    /** @description Normalized error code when branch resolution or execution failed. */
-                    error_code: string | null;
-                    /** @description Git branch being tested. */
-                    test_run_branch: string;
-                    /** @description ISO 8601 timestamp when the run was created. */
-                    created_at: string;
-                    /** @description Concurrency group and policy the run was created with, or null when no limit applied. */
-                    concurrency: {
-                        /** @description Concurrency group the run was scoped to. Runs in the same group are limited to one in progress at a time. */
-                        group: string;
-                        /**
-                         * @description What this run did when the group already had an active run: `cancel` cancelled it, `wait` queued behind it.
-                         * @enum {string}
-                         */
-                        on_conflict: "cancel" | "wait";
-                    } | null;
-                    /** @description Requested, resolved, and executed test-repository code. */
-                    test_code: {
-                        requested: {
-                            branch: string;
-                            /** @enum {string} */
-                            source: "explicit" | "build" | "project_default" | "legacy";
-                            /** @enum {string} */
-                            if_missing: "error" | "use_default" | "create";
-                            merge_with_default: boolean;
-                        };
-                        resolved: {
-                            branch: string | null;
-                            sha: string | null;
-                            /** @enum {string|null} */
-                            fallback_reason: "requested_branch_missing" | null;
-                        };
-                        execution: {
-                            ref: string | null;
-                            sha: string | null;
-                            /** @enum {string|null} */
-                            ref_kind: "branch" | "temporary_merge" | null;
-                        };
-                        merge_base: {
-                            branch: string;
-                            sha: string | null;
-                        } | null;
-                        /** @enum {string} */
-                        resolution_status: "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
-                        resolution_error_code: string | null;
-                    } | null;
-                };
-            };
-        };
-        TriggerTestRunRequest: {
-            /** @description The environment slug to run tests against (e.g., `production`, `staging`). */
-            environment: string;
-            /** @description Build information to associate with the test run. */
-            build?: {
-                /** @description Git branch name of the build. */
-                branch?: string;
-                /** @description Git commit SHA of the build. */
-                commit?: string;
-                /** @description Source repository in owner/name format (e.g., acme/web). */
-                repo?: string;
-                /** @description Legacy commit URL accepted only to infer build.repo for older callers. */
-                commit_url?: string;
-                /** @description Legacy build URL forwarded as BUILD_URL for allowlisted projects. */
-                url?: string;
-            };
-            /** @description Custom key-value pairs to associate with the test run. Values must be strings or numbers. */
-            metadata?: {
-                [key: string]: string | number;
-            };
-            /** @description Environment variables to override for this test run. */
-            environment_variables_overrides?: {
-                /** @description Name of the environment variable. */
-                name: string;
-                /** @description Value of the environment variable. */
-                value: string;
-            }[];
-            /** @description Tags to filter which tests to run (e.g., `@smoke`, `@critical`). Only tests matching these tags will be executed. */
-            tags?: string[];
-            /** @description Specific test case ids (Playwright per-project `test.id`) to run. Only these tests will be executed. */
-            test_case_ids?: string[];
-            /** @description Existing test-repository branch to run. A missing explicit branch creates an errored run; Empirical never creates it. May be supplied alongside `build`, which describes the application code under test. */
-            branch?: string;
-            /** @description Use `build.branch` as the requested test-repository branch. Defaults to false. Projects migrated from the legacy Branching setting retain their previous same-as-build behavior when this field is omitted. If no matching test branch exists, the run falls back to the project default branch without creating a branch. Cannot be true together with `branch`. */
-            use_same_branch_as_build?: boolean;
-            /** @description Run a temporary merge preview of the resolved test branch into the project default branch. When omitted, the default is true for same-as-build selection and false for explicit-branch or project-default selection. No merge is needed when the resolved branch is already the default branch. Temporary `test-run/merge/*` refs are cleaned up after the run. */
-            merge_with_default?: boolean;
-            /** @description Concurrency group and policy for this run. Runs in the same group (within the project) are limited to one in progress; `on_conflict` says what this run does when the group already has an active run: `cancel` cancels it and starts now, `wait` queues behind it (a newer waiting run replaces an older one). Omit to use the project's legacy concurrency setting; `null` for no limit. */
-            concurrency?: {
-                /** @description Free-form group key, scoped to the project, e.g. `production`, `staging/acme/web@feat-x`, or a build URL. */
-                group: string;
-                /**
-                 * @description `cancel`: cancel the group's in-progress and waiting runs, then start. `wait`: queue behind the in-progress run; a newer waiting run replaces this one.
-                 * @enum {string}
-                 */
-                on_conflict: "cancel" | "wait";
-            } | null;
-            /** @description Legacy project ID; must match the request's resolved project scope when set. The project scope itself comes from the bound principal or the x-project-id header, never from the body. */
-            project_id?: number;
-            /** @description Whether to send run notifications. Defaults to true. */
-            send_notifications?: boolean;
-            /** @description Override the number of shards to split the run across. */
-            total_shards?: number;
-            /** @description ID of the test run this run is a rerun of. */
-            rerun_source_id?: number;
-            /** @description When rerunning, only re-execute the previously failed tests. */
-            rerun_only_failed?: boolean;
-            /** @description GitHub username that triggered the run, for attribution. */
-            github_actor?: string;
-        };
-        UpdateTestRunStateResponse: {
+        TestRunLinkedChangesResponse: {
             /** @description Response payload. */
             data: {
-                test_run: components["schemas"]["TestRunRow"];
+                /** @description Null when the run was not triggered by an app PR. */
+                linked_changes: {
+                    /** @description The app repository (owner/name) of the PR. */
+                    app_repo: string;
+                    app_pull_request: {
+                        number: number | null;
+                        head: string;
+                        base: string | null;
+                    };
+                    /** @description The test repository. */
+                    test_repo: string;
+                    /** @description Test branch linked to the app PR by name. */
+                    test_branch: string;
+                    default_branch: string;
+                    /** @enum {string} */
+                    state: "no_test_branch" | "nothing_to_merge" | "ahead_no_pr" | "pr_open" | "pr_open_not_mergeable" | "error";
+                    /** @enum {string} */
+                    status: "in_progress" | "completed";
+                    /** @enum {string|null} */
+                    conclusion: "success" | "failure" | "neutral" | null;
+                    title: string;
+                    ahead_by: number;
+                    /** @description Open test PR from the test branch, if any. */
+                    test_pull_request: {
+                        number: number;
+                        url: string;
+                        mergeable: boolean | null;
+                    } | null;
+                    /** @description Merged test PR, when the branch was deleted after merge. */
+                    merged_test_pull_request: {
+                        number: number;
+                        url: string;
+                    } | null;
+                    /** @description Latest GitHub check written for the app PR, from any of its runs. */
+                    check: {
+                        check_run_url: string | null;
+                        head_sha: string;
+                        test_run_id: number;
+                        state: string | null;
+                        last_error: string | null;
+                        updated_at: string;
+                    } | null;
+                } | null;
+            };
+        };
+        TestRunLogEvent: {
+            /** @description Event timestamp in epoch milliseconds. */
+            timestamp: number;
+            /** @description Log line text. */
+            message: string;
+        };
+        TestRunLogsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Log events for the task. */
+                events: components["schemas"]["TestRunLogEvent"][];
+                /** @description Token to fetch the next (forward) page. */
+                nextForwardToken?: string;
+                /** @description Token to fetch the previous (backward) page. */
+                nextBackwardToken?: string;
+            };
+        };
+        TestRunManifestCountsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Scheduled test count (interrupted-shard adjusted). */
+                total_tests: number;
+                /** @description Per-shard scheduled count, or null when the run is unsharded. */
+                shards: {
+                    [key: string]: number;
+                } | null;
+            };
+        };
+        TestRunManifestTest: {
+            /** @description Full test line, e.g. `[chromium] › a.spec.ts › title`. */
+            name: string;
+            /**
+             * @description Whether the scheduled test has run yet. `retrying` means at least one attempt is in but retries are outstanding; its result fields are provisional until it flips to `ran`. `interrupted` means the shard was interrupted before the test finished and a resume shard (`superseded_by_shard`) re-scheduled it; that shard's row holds the result.
+             * @enum {string}
+             */
+            status: "ran" | "retrying" | "pending" | "interrupted";
+            /** @description Ledger row ID. */
+            id?: number;
+            /** @description Shard the row belongs to, or null when unsharded. */
+            shard_index?: number | null;
+            /** @description Normalized match key for the test. */
+            match_key?: string;
+            /** @description Playwright `test.id`, if known. */
+            pw_test_id?: string | null;
+            /** @description Pass/fail verdict for a completed test. */
+            result_status?: ("passed" | "failed" | "flaky" | "skipped") | null;
+            /** @description Number of retries recorded. */
+            retries?: number | null;
+            /** @description Total run duration in milliseconds. */
+            total_duration?: number | null;
+            /** @description Stored Playwright-shaped retry details. */
+            retry_details?: {
+                /** @description Per-retry attempt details. */
+                retries: components["schemas"]["RetryDetail"][];
+            } | null;
+            /** @description Run-time path `[file, ...suites, title]`. */
+            nesting?: string[] | null;
+            /** @description 7-day average duration (ms) snapshotted at landing. */
+            expected_duration_ms?: number | null;
+            /** @description Resume shard that re-scheduled this test, when `status` is `interrupted`. */
+            superseded_by_shard?: number | null;
+        };
+        TestRunManifestTestsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Per-shard manifest breakdown. */
+                tests: components["schemas"]["ShardManifestTests"][];
             };
         };
         TestRunRow: {
@@ -10222,451 +14824,10 @@ export interface components {
             rerun_only_failed: boolean | null;
             /** @description Tags applied to the run. */
             tags: string[] | null;
+            /** @description Tags whose tests the run skips. */
+            exclude_tags: string[] | null;
             /** @description Storage bucket holding the run's artifacts. */
             storage_bucket: string | null;
-            /** @description Whether notifications are sent for the run. */
-            send_notifications: boolean;
-        };
-        UpdateTestRunStateRequest: {
-            /** @description Run identifier (`run_id`, not the DB primary key). */
-            testRunId: number;
-            /** @description Repository name used to resolve the run's project. */
-            projectRepoName: string;
-            /** @description Branch the run executed against. */
-            testRunBranch?: string;
-            /** @description Head commit SHA the run executed against. */
-            testRunHeadSha?: string;
-            /**
-             * @description New run state reported by the run worker.
-             * @enum {string}
-             */
-            state: "pending" | "queued" | "cancelling" | "cancelled" | "ended" | "started" | "error" | "interrupted";
-            /** @description Environment slug the run executed against. */
-            environment: string;
-            /** @description Error code when transitioning to an error state. */
-            errorCode?: string;
-        };
-        TestRunBranchListResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Branch names with recent test runs. */
-                branches: string[];
-            };
-        };
-        TestRunHistoryChartResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Test runs ordered newest first. */
-                items: components["schemas"]["TestRunHistoryChartItem"][];
-            };
-        };
-        TestRunHistoryChartItem: {
-            /** @description Test run ID. */
-            id: number;
-            /** @description Run state. */
-            state: string | null;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string | null;
-            /** @description Total number of tests. */
-            total_count: number | null;
-            /** @description Number of passed tests. */
-            success_count: number | null;
-            /** @description Number of failed tests. */
-            failed_count: number | null;
-            /** @description Failed tests remaining after snoozes applied. */
-            failed_count_after_snoozing: number | null;
-            /** @description Number of flaky tests. */
-            flaky_count: number | null;
-            /** @description Environment ID the run executed against. */
-            environment_id: number | null;
-            /** @description Environment name. */
-            environment_name: string | null;
-            /** @description Environment slug. */
-            environment_slug: string | null;
-            /** @description Error code when the run failed. */
-            error_code: string | null;
-            /** @description ID of the run this run is a rerun of, if any. */
-            rerun_source_id: number | null;
-        };
-        TestRunSummaryDetailResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["TestRunSummaryDetail"][];
-        };
-        TestRunSummaryDetail: {
-            /** @description Diagnosis row ID. */
-            id: number;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description Playwright test ID. */
-            pw_test_id: string | null;
-            /** @description Test run ID. */
-            test_run_id: string;
-            /** @description Test case status. */
-            status: string;
-            /** @description Playwright project the test ran under. */
-            test_project: string | null;
-            /** @description Last commit SHA before the run started. */
-            last_commit_before_run_started_at: string | null;
-            /** @description Source line that triggered the failure. */
-            failing_line: string | null;
-            /** @description Run-time test path `[file, ...suites, title]`. */
-            nesting: string[];
-            /** @description Per-retry details for the failed test. */
-            retry_details: {
-                retries: components["schemas"]["RetryDetail"][];
-            } | null;
-            /** @description Snoozes that apply to this test in this run. */
-            snooze_info: components["schemas"]["TestRunSummaryDetailSnooze"][];
-        };
-        RetryDetail: {
-            /** @description 0-based attempt index for the retry. */
-            retryIndex: number;
-            /**
-             * @description Final status of the retry attempt.
-             * @enum {string}
-             */
-            status: "passed" | "failed" | "timedOut" | "skipped" | "interrupted";
-            /** @description Expected status of the retry. */
-            expectedStatus: string;
-            /** @description Duration of the retry in milliseconds. */
-            duration: number;
-            /** @description ISO 8601 timestamp when the retry started. */
-            startTime: string;
-            /** @description Error details if the retry failed. */
-            error?: {
-                /** @description Error message. */
-                message: string;
-                /** @description Full error stack. */
-                stack: string;
-                /** @description Source location of the error. */
-                location?: {
-                    /** @description Source file of the error. */
-                    file: string;
-                    /** @description Line number of the error. */
-                    line: number;
-                    /** @description Column number of the error. */
-                    column: number;
-                };
-            };
-            /** @description Attachments captured during the retry (screenshots, traces, videos). */
-            attachments?: components["schemas"]["RetryAttachment"][];
-            /** @description The source line that triggered the failure. */
-            failingLine?: string;
-            /** @description Playwright annotations for the attempt (static + runtime). Absent on rows recorded before annotations were captured. */
-            annotations?: {
-                /** @description Annotation type. */
-                type: string;
-                /** @description Annotation description, if any. */
-                description?: string;
-            }[];
-        };
-        RetryAttachment: {
-            /** @description Attachment name. */
-            name: string;
-            /** @description Storage path of the attachment. */
-            path: string;
-            /** @description MIME type of the attachment. */
-            contentType: string;
-            /** @description URL to download the attachment. */
-            url: string;
-        };
-        TestRunSummaryDetailSnooze: {
-            /** @description Snooze ID. */
-            snooze_id: number;
-            /** @description Snooze description. */
-            description: string | null;
-            /** @description User ID that created the snooze. */
-            created_by: string | null;
-            /** @description Avatar URL of the snooze creator. */
-            created_by_picture: string | null;
-            /** @description ISO 8601 timestamp the snooze is active until. */
-            snooze_until: string | null;
-            /** @description ISO 8601 timestamp the snooze was created. */
-            created_at: string | null;
-            /**
-             * @description Why the snooze applies: `window` (active window overlapped the run) or `originating_run` (created from this run).
-             * @enum {string}
-             */
-            match_reason: "window" | "originating_run";
-            /** @description Environment the snooze is scoped to; null applies to all environments. */
-            scoped_to_environment_id: number | null;
-        };
-        TriageShareTargetsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Reply targets for channels that already have a run notification thread. */
-                thread_targets: components["schemas"]["TriageShareTarget"][];
-                /** @description New-message targets for active Slack channels accessible to the organization. */
-                channel_targets: components["schemas"]["TriageShareTarget"][];
-            };
-        };
-        TriageShareTarget: {
-            /**
-             * @description Whether this target replies under an existing run thread or starts a new message.
-             * @enum {string}
-             */
-            kind: "thread" | "channel";
-            /** @description Slack channel ID. */
-            channel_id: string;
-            /** @description Slack channel name, if known. */
-            channel_name: string | null;
-            /** @description Slack workspace (team) ID. */
-            team_id: string | null;
-            /** @description Timestamp of the thread to reply under. */
-            thread_ts?: string;
-        };
-        GetTestRunResponse: {
-            data: {
-                test_run: {
-                    project: {
-                        /** @description Project ID. */
-                        id: number;
-                        /** @description Project name. */
-                        name: string;
-                        /** @description Repository name for the project. */
-                        repo_name: string;
-                    };
-                    testRun: components["schemas"]["TestRunDetail"];
-                    /** @description Detailed results for each test case. */
-                    flattenedSummaryDetails: unknown[];
-                };
-            };
-        };
-        TestRunDetail: {
-            /** @description Unique identifier. */
-            id: number;
-            /**
-             * @description Current state of the test run.
-             * @enum {string}
-             */
-            state: "pending" | "queued" | "started" | "ended" | "error" | "cancelled" | "cancelling";
-            /** @description Total number of test cases. */
-            total_count: number;
-            /** @description Number of passed tests. */
-            success_count: number;
-            /** @description Number of failed tests. */
-            failed_count: number;
-            /** @description Number of skipped tests. */
-            skipped_count: number | null;
-            /** @description Number of flaky tests. */
-            flaky_count: number | null;
-            /** @description Duration in milliseconds. */
-            duration: number | null;
-            /** @description Git branch being tested. */
-            test_run_branch: string | null;
-            /** @description Environment identifier. */
-            environment_slug: string | null;
-            /** @description Environment display name. */
-            environment_name: string | null;
-            /** @description URL of the deployment tested, i.e. the run's resolved `BUILD_URL` environment variable. */
-            build_url: string | null;
-            /** @description Git branch of the build. */
-            build_branch: string | null;
-            /** @description Commit SHA. */
-            commit: string | null;
-            /** @description ISO 8601 timestamp. */
-            created_at: string;
-            /** @description Concurrency group and policy the run was created with, or null when no limit applied. */
-            concurrency: {
-                /** @description Concurrency group the run was scoped to. Runs in the same group are limited to one in progress at a time. */
-                group: string;
-                /**
-                 * @description What this run did when the group already had an active run: `cancel` cancelled it, `wait` queued behind it.
-                 * @enum {string}
-                 */
-                on_conflict: "cancel" | "wait";
-            } | null;
-            /** @description Git commit SHA. */
-            test_run_head_sha: string | null;
-            /** @description ISO 8601 timestamp when tests started. */
-            run_started_at: string | null;
-            /** @description ISO 8601 timestamp when tests ended. */
-            run_ended_at: string | null;
-            /** @description URL to download the Playwright JSON report for this run. */
-            summary_url: string | null;
-            /** @description Branch-resolution provenance. Null only for historical runs created before provenance was recorded. */
-            test_code: {
-                requested: {
-                    branch: string;
-                    /** @enum {string} */
-                    source: "explicit" | "build" | "project_default" | "legacy";
-                    /** @enum {string} */
-                    if_missing: "error" | "use_default" | "create";
-                    merge_with_default: boolean;
-                };
-                resolved: {
-                    branch: string | null;
-                    sha: string | null;
-                    /** @enum {string|null} */
-                    fallback_reason: "requested_branch_missing" | null;
-                };
-                execution: {
-                    ref: string | null;
-                    sha: string | null;
-                    /** @enum {string|null} */
-                    ref_kind: "branch" | "temporary_merge" | null;
-                };
-                merge_base: {
-                    branch: string;
-                    sha: string | null;
-                } | null;
-                /** @enum {string} */
-                resolution_status: "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
-                resolution_error_code: string | null;
-            } | null;
-        };
-        IngestTestCaseRunEndEventResponse: {
-            /** @description Empty acknowledgement payload. */
-            data?: Record<string, never>;
-            /** @description Present only when the event was rejected without a retry (e.g. missing `runId`). */
-            error?: {
-                /** @description Reason the event was rejected. */
-                message: string;
-            };
-        };
-        TestCaseRunEndEventRequest: {
-            /**
-             * @description Event name, e.g. `test_case_run_end`.
-             * @enum {string}
-             */
-            name?: "test_case_run_end";
-            data: components["schemas"]["TestCaseRunEndEventV2"];
-        };
-        TestCaseRunEndEventV2: {
-            runId: string;
-            test: components["schemas"]["TestCaseRunEndPayloadTest"];
-            suites: string[];
-            result: components["schemas"]["TestCaseRunEndPayloadResult"];
-            projectName: string;
-            attachments: components["schemas"]["TestCaseRunEndAttachment"][];
-            failingLine?: string;
-            shardIndex?: number;
-            maxFailures?: number;
-        };
-        TestCaseRunEndPayloadTest: {
-            id: string;
-            title: string;
-            location: components["schemas"]["TestCaseRunEndPayloadLocation"];
-            expectedStatus: components["schemas"]["TestCaseRunEndPayloadStatus"];
-            retries: number;
-        };
-        TestCaseRunEndPayloadLocation: {
-            file: string;
-            line: number;
-            column: number;
-        };
-        /** @enum {string} */
-        TestCaseRunEndPayloadStatus: "passed" | "failed" | "timedOut" | "skipped" | "interrupted";
-        TestCaseRunEndPayloadResult: {
-            retry: number;
-            status: components["schemas"]["TestCaseRunEndPayloadStatus"];
-            duration: number;
-            startTime: string;
-            error?: components["schemas"]["TestCaseRunEndPayloadError"];
-            errors?: components["schemas"]["TestCaseRunEndPayloadError"][];
-            annotations?: components["schemas"]["TestCaseRunEndPayloadAnnotation"][];
-        };
-        TestCaseRunEndPayloadError: {
-            message?: string;
-            stack?: string;
-            location?: components["schemas"]["TestCaseRunEndPayloadLocation"];
-        };
-        TestCaseRunEndPayloadAnnotation: {
-            type: string;
-            description?: string;
-        };
-        TestCaseRunEndAttachment: {
-            name: string;
-            path: string;
-            contentType: string;
-            url: string;
-        };
-        UpdateShardStateResponse: {
-            /** @description Response payload. */
-            data: {
-                shard: components["schemas"]["TestRunShardState"];
-                /**
-                 * @description Present and `true` when the worker should merge reports locally instead of dispatching a merge job.
-                 * @enum {boolean}
-                 */
-                shouldMergeLocally?: true;
-                /** @description Payload for the local merge job, present only alongside `shouldMergeLocally`. */
-                mergeJobPayload?: {
-                    origin_url: string;
-                    git_repo_name: string;
-                    git_remote_url: string;
-                    git_branch: string;
-                    git_commit_sha: string;
-                    test_run_id: string;
-                    project_name: string;
-                    empiricalrun_api_key: string;
-                    /** @enum {string} */
-                    region: "us-east-1" | "ap-south-1";
-                    environment_slug: string;
-                    shard_index?: number;
-                    total_shards: number;
-                    /** @enum {string} */
-                    job_type: "merge_reports";
-                    storage_bucket?: string;
-                    resume_run_from_shard?: number;
-                } | null;
-            };
-        };
-        TestRunShardState: {
-            /** @description Internal test run ID (primary key). */
-            testRunId: number;
-            /** @description Zero-based index of the shard. */
-            shardIndex: number;
-            /** @description Current state of the shard. */
-            state: string | null;
-        };
-        ListArtifactsResponse: {
-            data: {
-                artifacts: components["schemas"]["Artifact"][];
-            };
-        };
-        Artifact: {
-            /** @description Artifact path relative to the test run. */
-            key: string;
-            /** @description HTTP URL to download the artifact. */
-            url: string;
-            /** @description File size in bytes. */
-            size: number;
-            /** @description ISO 8601 timestamp of when the artifact was last modified. */
-            last_modified: string;
-        };
-        TestRunStatusResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether the run is in a terminal state. */
-                isTerminal: boolean;
-                /**
-                 * @description Current run state (e.g. queued, started, ended).
-                 * @enum {string|null}
-                 */
-                status: "pending" | "queued" | "cancelling" | "cancelled" | "ended" | "started" | "error" | "interrupted" | null;
-                /** @description Arbitrary run metadata key/value pairs. */
-                metadata: {
-                    [key: string]: string;
-                } | null;
-                /** @description ID of the run this run is a rerun of, if any. */
-                rerun_source_id: number | null;
-                /** @description Whether the rerun re-ran only failed tests. */
-                rerun_only_failed: boolean | null;
-                /** @description Feature flags active for this run. */
-                feature_flags: string[];
-                /** @description Tags applied to the run. */
-                tags: string[];
-                /** @description Specific test case ids to run. */
-                test_case_ids: string[];
-            };
-        };
-        TestRunShardsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Shards for the run, ordered by shard index. */
-                shards: components["schemas"]["TestRunShard"][];
-            };
         };
         TestRunShard: {
             /** @description Shard row ID. */
@@ -10699,93 +14860,12 @@ export interface components {
             /** @description Shard index this shard resumes from, if a resume. */
             resume_from: number | null;
         };
-        TestRunEnvironmentVariablesResponse: {
-            /** @description Response payload. */
+        TestRunShardAssignedTestsResponse: {
             data: {
-                /** @description Resolved environment variables for the run. */
-                environment_variables: components["schemas"]["TestRunEnvironmentVariable"][];
-            };
-        };
-        TestRunEnvironmentVariable: {
-            /** @description Variable ID (0 for run-level overrides). */
-            id: number;
-            /** @description Owning project ID. */
-            project_id: number;
-            /** @description Variable name. */
-            name: string;
-            /** @description Variable description. */
-            description: string;
-            /** @description Variable value. */
-            value: string;
-            /** @description ISO 8601 timestamp the variable was created. */
-            created_at: string;
-            /** @description ISO 8601 timestamp the variable was last updated. */
-            updated_at: string;
-            /** @description User ID who last updated the variable. */
-            updated_by: string | null;
-            /** @description Whether the variable applies to all environments. */
-            all_environments: boolean;
-            /** @description Environment IDs the variable is scoped to. */
-            environment_ids: number[];
-        };
-        TestRunManifestTestsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Per-shard manifest breakdown. */
-                tests: components["schemas"]["ShardManifestTests"][];
-            };
-        };
-        ShardManifestTests: {
-            /** @description Shard index, or null for a non-sharded run. */
-            shard_index: number | null;
-            /** @description Scheduled tests on this shard that have run. */
-            ran_count: number;
-            /** @description Total tests scheduled on this shard. */
-            scheduled_count: number;
-            /** @description Scheduled tests in order, each tagged ran/pending. */
-            tests: components["schemas"]["TestRunManifestTest"][];
-        };
-        TestRunManifestTest: {
-            /** @description Full test line, e.g. `[chromium] › a.spec.ts › title`. */
-            name: string;
-            /**
-             * @description Whether the scheduled test has run yet.
-             * @enum {string}
-             */
-            status: "ran" | "pending";
-            /** @description Ledger row ID. */
-            id?: number;
-            /** @description Shard the row belongs to, or null when unsharded. */
-            shard_index?: number | null;
-            /** @description Normalized match key for the test. */
-            match_key?: string;
-            /** @description Playwright `test.id`, if known. */
-            pw_test_id?: string | null;
-            /** @description Pass/fail verdict for a completed test. */
-            result_status?: ("passed" | "failed" | "flaky" | "skipped") | unknown;
-            /** @description Number of retries recorded. */
-            retries?: number | null;
-            /** @description Total run duration in milliseconds. */
-            total_duration?: number | null;
-            /** @description Stored Playwright-shaped retry details. */
-            retry_details?: {
-                /** @description Per-retry attempt details. */
-                retries: components["schemas"]["RetryDetail"][];
-            } | null;
-            /** @description Run-time path `[file, ...suites, title]`. */
-            nesting?: string[] | null;
-            /** @description 7-day average duration (ms) snapshotted at landing. */
-            expected_duration_ms?: number | null;
-        };
-        TestRunManifestCountsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Scheduled test count (interrupted-shard adjusted). */
-                total_tests: number;
-                /** @description Per-shard scheduled count, or null when the run is unsharded. */
-                shards: {
-                    [key: string]: number;
-                } | null;
+                /** @description Playwright test-case ids this shard is assigned to execute. */
+                test_case_ids: string[];
+                /** @description Shard count the plan was built for. */
+                total_shards: number;
             };
         };
         TestRunShardResumeResponse: {
@@ -10795,6 +14875,100 @@ export interface components {
                 resume_from: number | null;
             };
         };
+        TestRunShardState: {
+            /** @description Internal test run ID (primary key). */
+            testRunId: number;
+            /** @description Zero-based index of the shard. */
+            shardIndex: number;
+            /** @description Current state of the shard. */
+            state: string | null;
+        };
+        TestRunShardsResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Shards for the run, ordered by shard index. */
+                shards: components["schemas"]["TestRunShard"][];
+            };
+        };
+        TestRunStatusResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether the run is in a terminal state. */
+                isTerminal: boolean;
+                /**
+                 * @description Current run state (e.g. queued, started, ended).
+                 * @enum {string|null}
+                 */
+                status: "pending" | "queued" | "cancelling" | "cancelled" | "ended" | "started" | "error" | "interrupted" | null;
+                /** @description Arbitrary run metadata key/value pairs. */
+                metadata: {
+                    [key: string]: string;
+                } | null;
+                /** @description ID of the run this run is a rerun of, if any. */
+                rerun_source_id: number | null;
+                /** @description Whether the rerun re-ran only failed tests. */
+                rerun_only_failed: boolean | null;
+                /** @description Feature flags active for this run. */
+                feature_flags: string[];
+                /** @description Tags applied to the run. */
+                tags: string[];
+                /** @description Tags whose tests the run skips. */
+                exclude_tags: string[];
+                /** @description Specific test case ids to run. */
+                test_case_ids: string[];
+            };
+        };
+        TestRunSummaryDetail: {
+            /** @description Diagnosis row ID. */
+            id: number;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description Playwright test ID. */
+            pw_test_id: string | null;
+            /** @description Test run ID. */
+            test_run_id: string;
+            /** @description Test case status. */
+            status: string;
+            /** @description Playwright project the test ran under. */
+            test_project: string | null;
+            /** @description Last commit SHA before the run started. */
+            last_commit_before_run_started_at: string | null;
+            /** @description Source line that triggered the failure. */
+            failing_line: string | null;
+            /** @description Run-time test path `[file, ...suites, title]`. */
+            nesting: string[];
+            /** @description Per-retry details for the failed test. */
+            retry_details: {
+                retries: components["schemas"]["RetryDetail"][];
+            } | null;
+            /** @description Snoozes that apply to this test in this run. */
+            snooze_info: components["schemas"]["TestRunSummaryDetailSnooze"][];
+        };
+        TestRunSummaryDetailResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["TestRunSummaryDetail"][];
+        };
+        TestRunSummaryDetailSnooze: {
+            /** @description Snooze ID. */
+            snooze_id: number;
+            /** @description Snooze description. */
+            description: string | null;
+            /** @description User ID that created the snooze. */
+            created_by: string | null;
+            /** @description Avatar URL of the snooze creator. */
+            created_by_picture: string | null;
+            /** @description ISO 8601 timestamp the snooze is active until. */
+            snooze_until: string | null;
+            /** @description ISO 8601 timestamp the snooze was created. */
+            created_at: string | null;
+            /**
+             * @description Why the snooze applies: `window` (active window overlapped the run) or `originating_run` (created from this run).
+             * @enum {string}
+             */
+            match_reason: "window" | "originating_run";
+            /** @description Environment the snooze is scoped to; null applies to all environments. */
+            scoped_to_environment_id: number | null;
+        };
         TestRunTestCaseDurationsResponse: {
             data: {
                 /** @description Length of the analytics window the averages cover. */
@@ -10802,43 +14976,14 @@ export interface components {
                 /** @description Per-test-case history, keyed by the normalized 41-char Playwright test id. */
                 durations: {
                     [key: string]: {
-                        /** @description Mean total duration over the window, in ms. */
+                        /** @description Mean total duration over the window, skipped results excluded, in ms. */
                         avg_duration_total: number;
+                        /** @description Mean total duration over the last day, in ms; null without recent results. */
+                        recent_avg_duration_total?: number | null;
                         /** @description Results the average was taken over. */
                         total_runs: number;
                     };
                 };
-            };
-        };
-        TestRunShardAssignedTestsResponse: {
-            data: {
-                /** @description Playwright test-case ids this shard is assigned to execute. */
-                test_case_ids: string[];
-                /** @description Shard count the plan was built for. */
-                total_shards: number;
-            };
-        };
-        TestRunLogsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Log events for the task. */
-                events: components["schemas"]["TestRunLogEvent"][];
-                /** @description Token to fetch the next (forward) page. */
-                nextForwardToken?: string;
-                /** @description Token to fetch the previous (backward) page. */
-                nextBackwardToken?: string;
-            };
-        };
-        TestRunLogEvent: {
-            /** @description Event timestamp in epoch milliseconds. */
-            timestamp: number;
-            /** @description Log line text. */
-            message: string;
-        };
-        GetTestRunTriageSessionResponse: {
-            /** @description Response payload. */
-            data: {
-                chat_session: components["schemas"]["ChatSession"] & unknown;
             };
         };
         TestRunTriageSessionResponse: {
@@ -10847,39 +14992,61 @@ export interface components {
                 chat_session: components["schemas"]["ChatSession"];
             };
         };
-        CancelTestRunResponse: {
-            /** @description Confirmation message indicating the test run was cancelled. */
-            message: string;
+        TestRunsListResponse: {
+            data: {
+                /** @description The project the runs belong to. */
+                project: {
+                    /** @description Project ID. */
+                    id: number;
+                    /** @description Project name. */
+                    name: string;
+                    /** @description Project slug. */
+                    slug: string;
+                    /** @description Repository name for the project. */
+                    repo_name: string;
+                };
+                /** @description Paginated test runs. */
+                test_runs: {
+                    /** @description The page of test runs. */
+                    items: components["schemas"]["TestRunItem"][];
+                };
+            };
+            pagination: components["schemas"]["Pagination"];
         };
-        CancelTestRunFailureResponse: {
-            /** @description Reason the test run could not be cancelled. */
-            message: string;
+        TriageStatus: {
+            id: string;
+            project_id: number;
+            test_run_id: number;
+            pw_test_id: string;
+            /** @enum {string} */
+            status: "working" | "completed";
+            group_id: string | null;
+            group: components["schemas"]["TriageStatusGroup"];
+            chat_session_id: number | null;
+            created_at: string;
+            updated_at: string;
         };
-        CancelTestRunRequest: {
-            /** @description Optional reason for cancelling the test run. Recorded for auditing purposes. */
-            reason?: string;
-        };
-        RerunTestRunRequest: {
-            /** @description When true, re-run only the failed tests from the source run. The source run must be completed. */
-            only_failed?: boolean;
-            /** @description Override whether notifications are sent for the re-run. Defaults to the source run's notification setting. */
-            send_notifications?: boolean;
-        };
-        StopTaskResponse: {
+        TriageStatusGroup: {
+            id: string;
+            label: string;
+            /** @enum {string} */
+            type: "app" | "test" | "unknown";
+            /** @enum {string} */
+            status: "open" | "resolved";
+            diagnosis: string | null;
+            recommendation: string | null;
+        } | null;
+        TriageStatusListResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Whether the SIGTERM was sent to the task. */
-                success: boolean;
+                triage_statuses: components["schemas"]["TriageStatus"][];
             };
         };
-        StopTaskRequest: {
-            /** @description Zero-based shard index, when stopping a sharded run. */
-            shard_index?: number;
-            /**
-             * @description Job type of the shard to stop. merge_reports and run_setup share shard_index 0. When omitted, the job is resolved from the run's shard rows; an index that carries more than one stoppable job is a 400. `run_setup` is never stoppable and is always rejected.
-             * @enum {string}
-             */
-            job_type?: "run_test" | "merge_reports" | "run_setup";
+        TriageStatusResponse: {
+            /** @description Response payload. */
+            data: {
+                triage_status: components["schemas"]["TriageStatus"];
+            };
         };
         TriggerMergeResponse: {
             /** @description Response payload. */
@@ -10894,391 +15061,173 @@ export interface components {
                 hasErrors: boolean;
             };
         };
-        UpdateEcsTaskResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether the ECS task id was recorded. */
-                updated: boolean;
+        TriggerTestRunRequest: {
+            /** @description Slug of a saved environment to run with (e.g., `production`, `staging`). Optional: without it the run uses only the project's variables and the config sent on this request. */
+            environment?: string;
+            /** @description Build information to associate with the test run. */
+            build?: {
+                /** @description Git branch name of the build. */
+                branch?: string;
+                /** @description Git commit SHA of the build. */
+                commit?: string;
+                /** @description Source repository in owner/name format (e.g., acme/web). */
+                repo?: string;
+                /** @description Legacy commit URL accepted only to infer build.repo for older callers. */
+                commit_url?: string;
+                /** @description Legacy build URL forwarded as BUILD_URL for allowlisted projects. */
+                url?: string;
             };
-        };
-        UpdateEcsTaskIdRequest: {
-            /** @description ECS task id assigned to the run/shard. */
-            ecs_task_id: string;
-            /** @description AWS region the ECS task runs in. */
-            region?: string;
-            /** @description Zero-based shard index, when the run is sharded. */
-            shard_index?: number;
-            /** @description Total number of shards, when the run is sharded. */
-            total_shards?: number;
-            /**
-             * @description Which job the task is running.
-             * @enum {string}
-             */
-            job_type?: "run_test" | "merge_reports" | "run_setup";
-        };
-        RunManifestResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Whether the run manifest was stored. */
-                created: boolean;
+            /** @description Custom key-value pairs to associate with the test run. Values must be strings or numbers. */
+            metadata?: {
+                [key: string]: string | number;
             };
-        };
-        PutRunManifestRequest: {
-            /** @description Structured scheduled tests. */
-            tests: {
-                /** @description Full test title. */
+            /** @description Environment variables to override for this test run. */
+            environment_variables_overrides?: {
+                /** @description Name of the environment variable. */
                 name: string;
-                /** @description Playwright test id, if known. */
-                pw_test_id?: string | null;
+                /** @description Value of the environment variable. */
+                value: string;
             }[];
-            /** @description Scheduled dependency groups (serial blocks). */
-            dependency_groups?: {
-                /** @description Stable group id. */
-                id: string;
+            /** @description Tags to filter which tests to run (e.g., `@smoke`, `@critical`). Only tests matching these tags will be executed. */
+            tags?: string[];
+            /** @description Tags whose tests are skipped (e.g., `@slow`). Applied after every other selection, so it can only remove tests: with `tags` it runs tests matching `tags` but not `exclude_tags`; alone it runs every test except the excluded ones. */
+            exclude_tags?: string[];
+            /** @description Specific test case ids (Playwright per-project `test.id`) to run. Only these tests will be executed. */
+            test_case_ids?: string[];
+            /** @description Existing test-repository branch to run. A missing explicit branch creates an errored run; Empirical never creates it. May be supplied alongside `build`, which describes the application code under test. */
+            branch?: string;
+            /** @description The application pull request under test, for pre-merge runs. The run uses the test-repository branch named `pull_request.head`, merged into the project default branch. If no such branch exists, it uses the default branch. An explicit `branch` takes precedence. */
+            trigger?: {
                 /**
-                 * @description Only Playwright serial groups today.
+                 * @description Event that produced the run.
                  * @enum {string}
                  */
-                kind: "playwright_serial";
-                /** @description Members in execution order. */
-                members: {
-                    /** @description Playwright test id of the member. */
-                    test_case_id: string;
-                    /** @description 0-based execution order within the group. */
-                    dependency_order: number;
-                }[];
-            }[];
-            /** @description Zero-based shard index, when the run is sharded. */
-            shard_index?: number;
-            /** @description Total number of shards, when the run is sharded. */
-            total_shards?: number;
-        };
-        ShardPlanResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Rows inserted. Zero when the run was already planned — the first plan wins and a retried POST is a no-op. */
-                shards_written: number;
-                /** @description Tests across the posted partition. */
-                total_tests: number;
-            };
-        };
-        PostShardPlanRequest: {
-            /** @description Shard count this partition was built for. Stored on every row and checked against the shard's own total_shards when the plan is read. */
-            total_shards: number;
-            /** @description One entry per run_test shard. */
-            shards: {
-                /** @description 1-based index of the run_test shard. Index 0 is the run_setup job and never carries an assignment. */
-                shard_index: number;
-                /** @description Tests assigned to this shard. */
-                tests: {
-                    /** @description Playwright test id (`pw_test_id`) assigned to this shard. */
-                    id: string;
-                    /** @description Scheduled test line (`[project] › file › suite › title`). Not stored yet; the server-written run manifest is its consumer. */
-                    name: string;
-                }[];
-            }[];
-            /** @description How the partition was chosen, stored verbatim for provenance (e.g. `equal split over the canonical listing`). */
-            reason?: string;
-            /** @description Modelled wall-clock of the slowest shard, in ms. */
-            predicted_makespan_ms?: number;
-            /** @description Modelled wall-clock at the ceiling — what the run would have done without the reduction, in ms. */
-            baseline_makespan_ms?: number;
-            /** @description Heaviest single schedulable unit, in ms. The floor no shard count can beat. */
-            longest_unit_ms?: number;
-            /** @description Fraction of planned tests that had a real historical duration. */
-            coverage?: number;
-        };
-        SkipTestRunResponse: {
-            data: {
-                /** @description ID of the GitHub check run created as skipped, or null if no GitHub reporter app is installed for the repo. */
-                check_run_id: number | null;
-                /** @description The status of the test run. */
-                status: string;
-            };
-            /** @description Always null for success responses. */
-            error: unknown;
-        };
-        SkipTestRunRequest: {
-            /** @description Full repository name in owner/repo format. */
-            repo: string;
-            /** @description Full Git commit SHA. */
-            commit_sha: string;
-            /** @description Environment slug. */
-            environment?: string;
-        };
-        GetTestRunV2Response: {
-            /** @description Response payload. */
-            data: {
-                /** @description Test run database ID. */
-                id: number;
-                /** @description Owning project ID. */
-                project_id: number;
-                /** @description Current run state. */
-                state: string | null;
-                /** @description External run identifier, if one was assigned. */
-                run_id: number | null;
-                total_count: number | null;
-                unique_count: number | null;
-                success_count: number | null;
-                failed_count: number | null;
-                failed_count_after_snoozing: number | null;
-                skipped_count: number | null;
-                flaky_count: number | null;
-                duration: number | null;
-                created_at: string | null;
-                run_started_at: string | null;
-                run_ended_at: string | null;
-                test_run_branch: string;
-                test_run_head_sha: string | null;
-                summary_url: string | null;
-                /** @description Environment ID, if one was selected. */
-                environment_id: number | null;
-                /** @description Environment slug, if one was selected. */
-                environment_slug: string | null;
-                /** @description Environment name, if one was selected. */
-                environment_name: string | null;
-                /** @description Per-run environment variable overrides. */
-                environment_variables_overrides: {
-                    name: string;
-                    value: string;
-                }[] | null;
-                build_url: string | null;
-                build_branch: string | null;
-                commit: string | null;
-                repo: string | null;
-                error_code: string | null;
-                cancellation_reason: string | null;
-                cancelled_by_user_id: string | null;
-                superseded_by_test_run_id: number | null;
-            };
-        };
-        ListTestRunCasesResponse: {
-            /** @description The page of test run cases. */
-            data: components["schemas"]["TestRunCase"][];
-            pagination: components["schemas"]["Pagination"];
-        };
-        TestRunCase: {
-            /** @description Playwright test ID; the case's URL id. Null for a ledger row that never matched a scheduled entry. */
-            pw_test_id: string | null;
-            /** @description Shard index (1+) for a sharded run; null for a non-sharded run. */
-            shard_index: number | null;
-            /** @description ID of the parent test run. */
-            test_run_id: string;
-            /**
-             * @description Outcome of the case.
-             * @enum {string}
-             */
-            status: "passed" | "failed" | "flaky" | "skipped";
-            /** @description Run-time path `[file, ...suites, title]`. */
-            nesting: string[];
-            /** @description Playwright project the case ran under. */
-            test_project: string | null;
-            /** @description Number of retries; null when not recorded. */
-            retries: number | null;
-            /** @description Total duration in milliseconds. */
-            total_duration: number | null;
-            /** @description Expected (7-day average) duration in ms. */
-            expected_duration_ms: number | null;
-            /** @description Raw Playwright retry details; null if absent. */
-            retry_details: {
-                /** @description Per-attempt retry details. */
-                retries: components["schemas"]["TestRunCaseRetryDetail"][];
-            } | null;
-            /** @description Failing source line derived from retry details. */
-            failing_line: string | null;
-            /** @description ISO 8601 test completion time from the run ledger. */
-            created_at: string | null;
-            /** @description SHA of the last commit before the run started. */
-            last_commit_before_run_started_at: string | null;
-            /** @description Snoozes matching this case at read time. */
-            snooze_info: components["schemas"]["TestRunCaseSnoozeInfo"][];
-            /** @description Attempts that never ran because an earlier member of this case's Playwright serial group failed on the same attempt. Null when the case is not in a snapshotted group or when nothing was blocked. */
-            skipped_attempts: components["schemas"]["TestRunCaseSkippedAttempt"][] | null;
-        };
-        TestRunCaseRetryDetail: {
-            /** @description Zero-based retry attempt index. */
-            retryIndex: number;
-            /**
-             * @description Outcome of this attempt.
-             * @enum {string}
-             */
-            status: "passed" | "failed" | "timedOut" | "skipped" | "interrupted";
-            /** @description Status Playwright expected for the test. */
-            expectedStatus: string;
-            /** @description Attempt duration in milliseconds. */
-            duration: number;
-            /** @description ISO 8601 start time of the attempt. */
-            startTime: string;
-            /** @description Error detail when the attempt failed. */
-            error?: {
-                /** @description Error message. */
-                message: string;
-                /** @description Error stack trace. */
-                stack: string;
-                /** @description Source location of the failure. */
-                location?: {
-                    /** @description Source file. */
-                    file: string;
-                    /** @description Line number. */
-                    line: number;
-                    /** @description Column number. */
-                    column: number;
+                event: "pull_request";
+                /** @description Pull request under test. */
+                pull_request: {
+                    /** @description Pull request number in the application repository. */
+                    number?: number;
+                    /** @description Head branch. */
+                    head: string;
+                    /** @description Base branch. */
+                    base: string;
                 };
             };
-            /** @description Attachments captured for the attempt. */
-            attachments?: {
-                /** @description Attachment name. */
-                name: string;
-                /** @description Attachment storage path. */
-                path: string;
-                /** @description Attachment MIME type. */
-                contentType: string;
-                /** @description Attachment URL. */
-                url: string;
-            }[];
-            /** @description Source line that failed, if known. */
-            failingLine?: string;
-            /** @description Playwright annotations for the attempt (static + runtime). Absent on rows recorded before annotations were captured. */
-            annotations?: {
-                /** @description Annotation type. */
-                type: string;
-                /** @description Annotation description, if any. */
-                description?: string;
-            }[];
-        };
-        TestRunCaseSnoozeInfo: {
-            /** @description ID of the matching snooze. */
-            snooze_id: number;
-            /** @description Snooze description. */
-            description: string | null;
-            /** @description User ID that created the snooze. */
-            created_by: string | null;
-            /** @description Avatar URL of the snooze creator. */
-            created_by_picture: string | null;
-            /** @description ISO 8601 expiry of the snooze. */
-            snooze_until: string | null;
-            /** @description ISO 8601 creation time of the snooze. */
-            created_at: string | null;
-            /**
-             * @description Why this snooze matched the case.
-             * @enum {string}
-             */
-            match_reason: "window" | "originating_run";
-            /** @description Environment the snooze is scoped to, if any. */
-            scoped_to_environment_id: number | null;
-        };
-        TestRunCaseSkippedAttempt: {
-            /** @description Attempt index this explains. */
-            retry_index: number;
-            /** @description The serial-group member that blocked this attempt. */
-            blocked_by: {
-                /** @description Playwright test id of the blocking test. */
-                pw_test_id: string | null;
-                /** @description Title of the blocking test. */
-                name: string;
-                /** @description The blocking test's outcome on this attempt. */
-                status: string;
-            };
-        };
-        GetTestRunCaseResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Playwright test ID; the case's URL id. Null for a ledger row that never matched a scheduled entry. */
-                pw_test_id: string | null;
-                /** @description Shard index (1+) for a sharded run; null for a non-sharded run. */
-                shard_index: number | null;
-                /** @description ID of the parent test run. */
-                test_run_id: string;
+            /** @description Concurrency group and policy for this run. Runs in the same group (within the project) are limited to one in progress; `on_conflict` says what this run does when the group already has an active run: `cancel` cancels it and starts now, `wait` queues behind it (a newer waiting run replaces an older one). Omit to use the project's legacy concurrency setting; `null` for no limit. */
+            concurrency?: {
+                /** @description Free-form group key, scoped to the project, e.g. `production`, `staging/acme/web@feat-x`, or a build URL. */
+                group: string;
                 /**
-                 * @description Outcome of the case.
+                 * @description `cancel`: cancel the group's in-progress and waiting runs, then start. `wait`: queue behind the in-progress run; a newer waiting run replaces this one.
                  * @enum {string}
                  */
-                status: "passed" | "failed" | "flaky" | "skipped";
-                /** @description Run-time path `[file, ...suites, title]`. */
-                nesting: string[];
-                /** @description Playwright project the case ran under. */
-                test_project: string | null;
-                /** @description Number of retries; null when not recorded. */
-                retries: number | null;
-                /** @description Total duration in milliseconds. */
-                total_duration: number | null;
-                /** @description Expected (7-day average) duration in ms. */
-                expected_duration_ms: number | null;
-                /** @description Raw Playwright retry details; null if absent. */
-                retry_details: {
-                    /** @description Per-attempt retry details. */
-                    retries: components["schemas"]["TestRunCaseRetryDetail"][];
-                } | null;
-                /** @description Failing source line derived from retry details. */
-                failing_line: string | null;
-                /** @description ISO 8601 test completion time from the run ledger. */
-                created_at: string | null;
-                /** @description SHA of the last commit before the run started. */
-                last_commit_before_run_started_at: string | null;
-                /** @description Snoozes matching this case at read time. */
-                snooze_info: components["schemas"]["TestRunCaseSnoozeInfo"][];
-                /** @description Attempts that never ran because an earlier member of this case's Playwright serial group failed on the same attempt. Null when the case is not in a snapshotted group or when nothing was blocked. */
-                skipped_attempts: components["schemas"]["TestRunCaseSkippedAttempt"][] | null;
-            };
+                on_conflict: "cancel" | "wait";
+            } | null;
+            /** @description Reporters for this run, saved on the run when it is created; at most one entry per `reporter_type`. Omit to use the environment's `reporter_config` (a run without an environment then gets none). A list replaces those defaults: reporters not listed do not fire, and `[]` turns them all off. Without `reporters`, a run started by a person (dashboard, CLI or agent session) also gets `slack_creator_dm`; a list sends the DM only if it names `slack_creator_dm`. Invalid entries (unknown Slack channels, duplicate types) reject the request without creating a run. */
+            reporters?: ({
+                /**
+                 * @description Posts run status updates to Slack channels.
+                 * @enum {string}
+                 */
+                reporter_type: "slack_run_status";
+                /** @description Slack channel ids (`C…`), as shown in Slack's channel details. Shared (Slack Connect) channels have the same id in every workspace. Each must be a registered, unarchived channel of the project's organization. */
+                slack_channels?: string[];
+                /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`). Can be combined with `slack_channels`. */
+                slack_channel_ids?: number[];
+            } | {
+                /**
+                 * @description Posts a GitHub check run on the build commit. Needs `build` with a repository the GitHub Reporter app is installed on.
+                 * @enum {string}
+                 */
+                reporter_type: "github_check";
+            } | {
+                /**
+                 * @description Posts (and updates) a comment on the pull request for the build branch. Needs `build` with a repository the GitHub Reporter app is installed on.
+                 * @enum {string}
+                 */
+                reporter_type: "github_pr_comment";
+            } | {
+                /**
+                 * @description Emails a report when the run ends to every user whose email domain is one of the organization's email domains.
+                 * @enum {string}
+                 */
+                reporter_type: "email_run_report";
+            } | {
+                /**
+                 * @description Sends a Slack DM to whoever started the run (from the dashboard, the CLI or an agent session) when it ends, if their Slack account is linked. Runs triggered with a project API key have no one to DM.
+                 * @enum {string}
+                 */
+                reporter_type: "slack_creator_dm";
+            })[];
+            /** @description Legacy project ID; must match the request's resolved project scope when set. The project scope itself comes from the bound principal or the x-project-id header, never from the body. */
+            project_id?: number;
+            /** @description Override the number of shards to split the run across. */
+            total_shards?: number;
+            /** @description ID of the test run this run is a rerun of. */
+            rerun_source_id?: number;
+            /** @description When rerunning, only re-execute the previously failed tests. */
+            rerun_only_failed?: boolean;
+            /** @description GitHub username that triggered the run, for attribution. */
+            github_actor?: string;
         };
-        UiLiveTestRunResponse: {
-            /** @description Response payload. */
-            data: {
-                test_run: components["schemas"]["LiveTestRun"];
-            };
-        };
-        LiveTestRun: {
-            /** @description Test run database ID. */
+        TruncatedProjectApiKey: {
+            /** @description API key ID. */
             id: number;
-            /** @description External run_id, if assigned. */
-            run_id: number | null;
-            /** @description ECS task ID running the run, if dispatched. */
-            ecs_task_id: string | null;
-            /** @description AWS region of the ECS task, if dispatched. */
-            ecs_task_region: string | null;
-            /** @description Total number of test cases. */
-            total_count: number | null;
-            /** @description Number of unique test cases. */
-            unique_count: number | null;
-            /** @description Number of passed tests. */
-            success_count: number | null;
-            /** @description Number of failed tests. */
-            failed_count: number | null;
-            /** @description Failed tests remaining after applying snoozes. */
-            failed_count_after_snoozing: number | null;
-            /** @description Number of skipped tests. */
-            skipped_count: number | null;
-            /** @description Number of flaky tests. */
-            flaky_count: number | null;
-            /** @description ISO 8601 timestamp when tests started. */
-            run_started_at: string | null;
-            /** @description ISO 8601 timestamp when tests ended. */
-            run_ended_at: string | null;
-            /** @description Run duration in milliseconds. */
-            duration: number | null;
-            /** @description URL of the Playwright JSON report. */
-            summary_url: string | null;
-            /** @description Current run state (queued, started, ended, ...). */
-            state: string | null;
-            /** @description Head commit SHA of the test repo. */
-            test_run_head_sha: string | null;
-            /** @description Head branch of the merge commit, if any. */
-            merge_commit_head_branch: string | null;
-            /** @description Base branch of the merge commit, if any. */
-            merge_commit_base_branch: string | null;
-            /** @description Whether the merge commit succeeded. */
-            merge_commit_successful: boolean | null;
-            /** @description Error code if the run failed. */
-            error_code: string | null;
-            /** @description Reason the run was cancelled, if any. */
-            cancellation_reason: string | null;
-            /** @description User ID that cancelled the run, if any. */
-            cancelled_by_user_id: string | null;
-            /** @description Artifact storage bucket for the run. */
-            storage_bucket: string | null;
-            /** @description ID of the run that supersedes this one, if any. */
-            superseded_by_test_run_id: number | null;
+            /** @description Project the key belongs to. */
+            project_id: number | null;
+            /** @description Human-readable name for the key. */
+            name: string;
+            /** @description User ID of the creator, if known. */
+            created_by: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string | null;
+            /** @description ISO 8601 timestamp the key was last updated. */
+            updated_at: string | null;
+            /** @description User ID of the last updater, if known. */
+            updated_by: string | null;
+            /** @description ISO 8601 timestamp the key was last used. */
+            last_used_at: string | null;
+            /** @description Whether the key is disabled. */
+            is_disabled: boolean | null;
+            /** @description Whether the key is an internal service key. */
+            is_internal: boolean | null;
+            /** @description Resolved details for the creating user, if available. */
+            created_by_user_detail: {
+                /** @description User ID. */
+                id: string;
+                /** @description User email. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description User avatar URL. */
+                picture: string;
+            } | null;
+            /** @description Resolved details for the last updating user, if available. */
+            updated_by_user_detail: {
+                /** @description User ID. */
+                id: string;
+                /** @description User email. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description User avatar URL. */
+                picture: string;
+            } | null;
+            /** @description Truncated preview of the API key. */
+            api_key_truncated: string;
         };
+        TwoCaptchaProxyRequest: {
+            /**
+             * @description 2Captcha endpoint to call.
+             * @enum {string}
+             */
+            endpoint: "/createTask" | "/getTaskResult";
+            /** @description Request payload forwarded to 2Captcha. The configured `clientKey` is injected server-side. */
+            body?: {
+                [key: string]: unknown;
+            };
+        };
+        TwoCaptchaProxyResponse: unknown;
         UiGetTestRunResponse: {
             /** @description Response payload. */
             data: {
@@ -11304,11 +15253,26 @@ export interface components {
                         id: number;
                         title: string | null;
                     } | null;
+                    /** @description The customer-hosted runner (Private Runner) the run was dispatched to. Null for runs on Empirical's hosted runners. */
+                    runner_backend: {
+                        id: number;
+                        name: string;
+                        aws_account_id: string;
+                        region: string;
+                    } | null;
+                    /** @description For a pending run held back by its concurrency group (on_conflict=wait), the in-progress run it is waiting on. Null when the run is not pending or nothing blocks it. */
+                    waiting_on_test_run_id: number | null;
                     /** @description First page of ledger-sourced cases, ordered failed → flaky → others so the default 'failed' filter and the failure-first list render correctly on first paint. Shipped inline so the list renders without waiting on a fetch. The client refetches the full set. */
                     ledger_cases: components["schemas"]["TestRunCase"][];
                     /** @description Total ledger case count for the run, so the client knows how much the inline first page is truncating. */
                     ledger_cases_total: number;
                 };
+            };
+        };
+        UiLiveTestRunResponse: {
+            /** @description Response payload. */
+            data: {
+                test_run: components["schemas"]["LiveTestRun"];
             };
         };
         /** @description Project the run belongs to. The full project row is returned; the documented fields are the ones the dashboard relies on. */
@@ -11324,206 +15288,379 @@ export interface components {
             /** @description Repository name backing the project. */
             repo_name: string;
         };
-        EnrichedTestRun: {
-            /** @description Test run database ID. */
-            id: number;
-            /** @description External run_id, if assigned. */
-            run_id: number | null;
-            /** @description ECS task ID running the run, if dispatched. */
-            ecs_task_id: string | null;
-            /** @description AWS region of the ECS task, if dispatched. */
-            ecs_task_region: string | null;
-            /** @description Owning project ID. */
-            project_id: number;
-            /** @description Total number of test cases. */
-            total_count: number | null;
-            /** @description Number of unique test cases. */
-            unique_count: number | null;
-            /** @description Number of passed tests. */
-            success_count: number | null;
-            /** @description Number of failed tests. */
-            failed_count: number | null;
-            /** @description Failed tests remaining after applying snoozes. */
-            failed_count_after_snoozing: number | null;
-            /** @description Number of skipped tests. */
-            skipped_count: number | null;
-            /** @description Number of flaky tests. */
-            flaky_count: number | null;
-            /** @description ISO 8601 timestamp when tests started. */
-            run_started_at: string | null;
-            /** @description ISO 8601 timestamp when tests ended. */
-            run_ended_at: string | null;
-            /** @description Run duration in milliseconds. */
-            duration: number | null;
-            /** @description Test repo branch the run executed. */
-            test_run_branch: string;
-            /** @description Head commit SHA of the test repo. */
-            test_run_head_sha: string | null;
-            /** @description Structured test-code provenance. Null for runs created before provenance capture shipped. */
-            test_code: {
-                requested: {
-                    branch: string;
-                    /** @enum {string} */
-                    source: "explicit" | "build" | "project_default" | "legacy";
-                    /** @enum {string} */
-                    if_missing: "error" | "use_default" | "create";
-                    merge_with_default: boolean;
-                };
-                resolved: {
-                    branch: string | null;
-                    sha: string | null;
-                    /** @enum {string|null} */
-                    fallback_reason: "requested_branch_missing" | null;
-                };
-                execution: {
-                    ref: string | null;
-                    sha: string | null;
-                    /** @enum {string|null} */
-                    ref_kind: "branch" | "temporary_merge" | null;
-                };
-                merge_base: {
-                    branch: string;
-                    sha: string | null;
-                } | null;
-                /** @enum {string} */
-                resolution_status: "resolved" | "branch_missing" | "merge_conflict" | "provider_error";
-                resolution_error_code: string | null;
-            } | null;
-            /** @description URL of the Playwright JSON report. */
-            summary_url: string | null;
-            /** @description Whether reporters fire for this run. */
-            send_notifications: boolean;
-            /** @description Current run state (queued, started, ended, ...). */
-            state: string | null;
-            /** @description Associated build row ID, if any. */
-            build_id: number | null;
-            /** @description Environment row ID, if any. */
-            environment_id: number | null;
-            /** @description Arbitrary run metadata key/value pairs. */
-            metadata: {
-                [key: string]: string;
-            } | null;
-            /** @description ISO 8601 timestamp the run was created. */
-            created_at: string | null;
-            /** @description User ID that created the run. */
-            created_by: string | null;
-            /** @description User agent that created the run. */
-            created_by_user_agent: string | null;
-            /** @description Environment display name. */
-            environment_name: string | null;
-            /** @description Environment slug. */
-            environment_slug: string | null;
-            /** @description Build commit SHA. */
-            commit: string | null;
-            /** @description Build branch name. */
-            branch: string | null;
-            /** @description Build repository in `org/repo` form. */
-            repo: string | null;
-            /** @description Git branch of the build. */
-            build_branch: string | null;
-            /** @description URL of the deployment tested, i.e. the run's resolved `BUILD_URL` environment variable. */
-            build_url: string | null;
-            /** @description GitHub actor that triggered the run. */
-            github_actor: string | null;
-            /** @description Run-level environment variable overrides. */
-            environment_variables_overrides: {
-                name: string;
-                value: string;
-            }[] | null;
-            /** @description Head branch of the merge commit, if any. */
-            merge_commit_head_branch: string | null;
-            /** @description Base branch of the merge commit, if any. */
-            merge_commit_base_branch: string | null;
-            /** @description Whether the merge commit succeeded. */
-            merge_commit_successful: boolean | null;
-            /** @description Error code if the run failed. */
-            error_code: string | null;
-            /** @description Reason the run was cancelled, if any. */
-            cancellation_reason: string | null;
-            /** @description User ID that cancelled the run, if any. */
-            cancelled_by_user_id: string | null;
-            /** @description ID of the run this run is a rerun of, if any. */
-            rerun_source_id: number | null;
-            /** @description Whether the rerun re-ran only failed tests. */
-            rerun_only_failed: boolean | null;
-            /** @description Feature flags active for this run. */
-            feature_flags: string[];
-            /** @description Artifact storage bucket for the run. */
-            storage_bucket: string | null;
-            /** @description ID of the run that supersedes this one, if any. */
-            superseded_by_test_run_id: number | null;
-            /** @description Tags applied to the run. */
-            tags: string[] | null;
-            /** @description Specific test case ids (Playwright test.id) to run. */
-            test_case_ids: string[] | null;
-            /** @description Concurrency group and policy the run was created with; null when no limit applied. */
-            concurrency: {
-                /** @description Concurrency group the run was scoped to. */
+        UpcomingInvoiceReminder: {
+            /** @description Invoice ID. */
+            invoice_id: number;
+            /** @description Human-readable invoice number. */
+            invoice_number: string;
+            /** @description Billed organisation ID. */
+            org_id: number;
+            /** @description Billed organisation name. */
+            org_name: string;
+            /** @description Billing recipients for the reminder. */
+            billing_emails: string[];
+            /** @description Invoice amount in minor currency units. */
+            amount_in_cents: number;
+            /** @description Invoice currency. */
+            currency: string;
+            /** @description Invoice due date. */
+            due_date: string | null;
+            /**
+             * @description Reminder email type.
+             * @enum {string}
+             */
+            reminder_type: "first" | "second";
+            /** @description Date this reminder would be sent. */
+            scheduled_send_date: string;
+            /** @description Calendar days since the due date. */
+            days_past_due: number | null;
+            /** @description First reminder timestamp, if already sent. */
+            first_reminder_sent_at: string | null;
+            /** @description Second reminder timestamp, if already sent. */
+            second_reminder_sent_at: string | null;
+        };
+        UpcomingInvoiceRemindersResponse: {
+            data: {
+                /** @description Upcoming invoice reminder candidates. */
+                reminders: components["schemas"]["UpcomingInvoiceReminder"][];
+            };
+            pagination: components["schemas"]["Pagination"];
+        };
+        UpdateApiKeyRequest: {
+            /**
+             * @description Whether to enable or disable the API key.
+             * @enum {string}
+             */
+            action: "enable" | "disable";
+        };
+        UpdateEcsTaskIdRequest: {
+            /** @description ECS task id assigned to the run/shard. */
+            ecs_task_id: string;
+            /** @description AWS region the ECS task runs in. */
+            region?: string;
+            /** @description Zero-based shard index, when the run is sharded. */
+            shard_index?: number;
+            /** @description Total number of shards, when the run is sharded. */
+            total_shards?: number;
+            /**
+             * @description Which job the task is running.
+             * @enum {string}
+             */
+            job_type?: "run_test" | "merge_reports" | "run_setup";
+        };
+        UpdateEcsTaskResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether the ECS task id was recorded. */
+                updated: boolean;
+            };
+        };
+        UpdateEnvironmentRequest: {
+            /** @description Display name. */
+            name?: string;
+            /** @description URL-friendly identifier. */
+            slug?: string;
+            /** @description Whether the environment is disabled. */
+            is_disabled?: boolean;
+            /** @description Playwright project names to include. Items must not start with '!'. */
+            playwright_projects_match?: string[];
+            /** @description Playwright project names to exclude. */
+            playwright_projects_ignore?: string[];
+            /** @description Cron expression for scheduled triggers, or null. */
+            scheduled_trigger?: string | null;
+            /** @description Concurrency group and policy scheduled runs are triggered with. Omit to keep the current value; null to fall back to the project's legacy concurrency setting. */
+            scheduled_concurrency?: {
+                /** @description Free-form group key, scoped to the project. */
                 group: string;
                 /**
-                 * @description Policy toward an active run in the group: cancel it, or wait behind it.
+                 * @description `cancel` cancels the group's active run and starts; `wait` queues behind it.
                  * @enum {string}
                  */
                 on_conflict: "cancel" | "wait";
             } | null;
-            /** @description GitHub PR for the build branch, resolved via the reporter app; null when there is no PR or the reporter is not installed. */
-            pull_request: {
-                /** @description Pull request number. */
-                number: number;
-                /** @description Pull request URL. */
-                url: string;
+            /** @description Reporter configuration for the environment. Slack channels (`slack_channels` or `slack_channel_ids`) must be active registered channels of the project's organization (GET /api/v2/slack/channels); they are stored as registered ids. */
+            reporter_config?: {
                 /**
-                 * @description Pull request state.
+                 * @description Reporter config schema version. Always `1`.
+                 * @enum {number}
+                 */
+                schema_version: 1;
+                /** @description Reporters, at most one per `reporter_type`. Replaces the stored list on write; an empty array disables them. */
+                reporters: ({
+                    /**
+                     * @description Posts run status updates to Slack channels.
+                     * @enum {string}
+                     */
+                    reporter_type: "slack_run_status";
+                    /** @description Slack channel ids (`C…`), as shown in Slack's channel details. Shared (Slack Connect) channels have the same id in every workspace. Each must be a registered, unarchived channel of the project's organization. */
+                    slack_channels?: string[];
+                    /** @description Registered Slack channel ids from `GET /api/v2/slack/channels` (the numeric `id`). Can be combined with `slack_channels`. */
+                    slack_channel_ids?: number[];
+                } | {
+                    /**
+                     * @description Posts a GitHub check run on the build commit. Needs `build` with a repository the GitHub Reporter app is installed on.
+                     * @enum {string}
+                     */
+                    reporter_type: "github_check";
+                } | {
+                    /**
+                     * @description Posts (and updates) a comment on the pull request for the build branch. Needs `build` with a repository the GitHub Reporter app is installed on.
+                     * @enum {string}
+                     */
+                    reporter_type: "github_pr_comment";
+                } | {
+                    /**
+                     * @description Emails a report when the run ends to every user whose email domain is one of the organization's email domains.
+                     * @enum {string}
+                     */
+                    reporter_type: "email_run_report";
+                })[];
+            };
+        };
+        UpdateFileRequest: {
+            /**
+             * @description Confirms the upload to `upload_url` finished. Fails if the file content is not in storage.
+             * @enum {string}
+             */
+            status: "uploaded";
+        };
+        UpdateJiraProjectMappingsRequest: {
+            /** @description Map of Jira project key to Empirical project ID. */
+            project_mappings: {
+                [key: string]: number;
+            };
+        };
+        UpdateJiraWebhookExpiresAtRequest: {
+            /**
+             * Format: date-time
+             * @description New webhook expiry timestamp, or `null` to clear it.
+             */
+            webhook_expires_at: string | null;
+        };
+        UpdateMemoryRequest: {
+            /** @description Memory content (markdown). */
+            content?: string;
+            /** @description Content format version. */
+            format_version?: number;
+            /** @description Display name (v2). */
+            name?: string | null;
+            /** @description Short description (v2). */
+            description?: string | null;
+            /** @description Why this change was made (max 500 characters). Shown in the session's memory change report. */
+            reason?: string | null;
+        };
+        UpdateOrderFormRequest: {
+            org_id?: number;
+            /** @enum {string} */
+            pricing_model?: "slab" | "fixed";
+            form_date?: string | null;
+            subscription_start_date?: string | null;
+            term_months?: number | null;
+            end_date?: string | null;
+            status?: string;
+            /** Format: date-time */
+            signed_at?: string | null;
+            contract_currency?: string;
+            pdf_r2_key?: string | null;
+            lines?: {
+                /** @enum {string} */
+                kind?: "tier" | "addon";
+                tier?: string | null;
+                label?: string | null;
+                base_price_cents: number;
+                meters?: {
+                    /** @enum {string} */
+                    meter: "test_suite_size" | "ai_credits" | "test_minutes" | "test_run_duration";
+                    included_qty?: number | null;
+                    overage_price_cents?: number | null;
+                }[];
+            }[];
+        };
+        UpdatePlanAssignmentRequest: {
+            /** @description Organisation this plan assignment belongs to. */
+            org_id?: number;
+            /** @description Plan the organisation is on. */
+            plan_id?: number;
+            /**
+             * Format: date-time
+             * @description When the assignment starts being effective (timestamptz).
+             */
+            effective_from?: string | null;
+            /**
+             * Format: date-time
+             * @description When the assignment stops being effective, or null for open-ended.
+             */
+            effective_to?: string | null;
+            /**
+             * @description Origin of the assignment.
+             * @enum {string}
+             */
+            source?: "order_form" | "derived_from_invoice" | "manual";
+        };
+        UpdatePlanRequest: {
+            /** @description Display name, as shown to customers. Renames the linked Dodo product too, so Dodo's checkout, portal and invoices match. */
+            name?: string;
+            /**
+             * @description `retired` hides the plan from new sales; existing assignments keep it.
+             * @enum {string}
+             */
+            status?: "active" | "retired";
+            /** @description `true` creates the plan's Dodo product now if it has none. `false` stops offering it at checkout; a linked Dodo product and existing subscriptions are left as they are. */
+            dodo_sync?: boolean;
+        };
+        UpdateProjectResourceRequest: {
+            /** @description New name for the file. */
+            name?: string;
+            /** @description Description for the file. */
+            description?: string;
+            /**
+             * @description Set to `"uploaded"` to confirm a pending upload.
+             * @enum {string}
+             */
+            status?: "uploaded";
+        };
+        UpdateShardStateResponse: {
+            /** @description Response payload. */
+            data: {
+                shard: components["schemas"]["TestRunShardState"];
+                /**
+                 * @description Present and `true` when the worker should merge reports locally instead of dispatching a merge job.
+                 * @enum {boolean}
+                 */
+                shouldMergeLocally?: true;
+                /** @description Payload for the local merge job, present only alongside `shouldMergeLocally`. */
+                mergeJobPayload?: {
+                    origin_url: string;
+                    git_repo_name: string;
+                    git_remote_url: string;
+                    git_branch: string;
+                    git_commit_sha: string;
+                    test_run_id: string;
+                    project_name: string;
+                    empiricalrun_api_key: string;
+                    /** @enum {string} */
+                    region: "us-east-1" | "ap-south-1";
+                    environment_slug?: string;
+                    shard_index?: number;
+                    total_shards: number;
+                    /** @enum {string} */
+                    job_type: "merge_reports";
+                    storage_bucket?: string;
+                    resume_run_from_shard?: number;
+                    teardown_shard_index?: number;
+                } | null;
+            };
+        };
+        UpdateSnoozeRequest: {
+            /** @description ISO 8601 timestamp for when the snooze should expire. */
+            snooze_until?: string;
+            /** @description Description, or `null` to clear it. */
+            description?: string | null;
+            /** @description Set to `true` to immediately expire the snooze. */
+            expire_now?: boolean;
+            /** @description Environment ID to scope the snooze to. Set to `null` to apply to all environments. */
+            scoped_to_environment_id?: number | null;
+            /** @description Updated array of Playwright test IDs to snooze. */
+            test_ids?: string[];
+        };
+        UpdateTaskRequest: {
+            /** @description New task title. */
+            title?: string;
+            /** @description New task description (Markdown). */
+            description?: string;
+            /**
+             * @description New task status. Moving a `draft` task to `open` starts an agent session.
+             * @enum {string}
+             */
+            status?: "draft" | "open" | "in-review" | "closed" | "resolved";
+        };
+        UpdateTestCaseTagsRequest: {
+            /** @description Array of tags to assign to the test case. */
+            tags: string[];
+        };
+        UpdateTestRunStateRequest: {
+            /** @description Run identifier (`run_id`, not the DB primary key). */
+            testRunId: number;
+            /** @description Deprecated and ignored: the run's own project is used. */
+            projectRepoName?: string;
+            /** @description Deprecated and ignored: the run's own branch is used. */
+            testRunBranch?: string;
+            /** @description Commit SHA the run checked out. Set by the worker when the run was dispatched without one. */
+            testRunHeadSha?: string;
+            /**
+             * @description New run state reported by the run worker.
+             * @enum {string}
+             */
+            state: "pending" | "queued" | "cancelling" | "cancelled" | "ended" | "started" | "error" | "interrupted";
+            /** @description Deprecated and ignored: the run's own environment is used. */
+            environment?: string;
+            /** @description Error code when transitioning to an error state. */
+            errorCode?: string;
+        };
+        UpdateTestRunStateResponse: {
+            /** @description Response payload. */
+            data: {
+                test_run: components["schemas"]["TestRunRow"];
+            };
+        };
+        UpdateWebhookRequest: {
+            /**
+             * Format: uri
+             * @description New HTTPS endpoint for event payloads.
+             */
+            url?: string;
+            /** @description New set of event names to subscribe to. */
+            events?: string[];
+            /** @description Whether the webhook is active. */
+            is_active?: boolean;
+        };
+        UpdatedTaskResponse: {
+            /** @description Response payload. */
+            data: {
+                task: components["schemas"]["Task"];
+            };
+        };
+        UpdatedWebhook: {
+            /** @description Webhook ID. */
+            id: number;
+            /** @description Project the webhook belongs to. */
+            project_id: number;
+            /** @description Endpoint that receives event payloads. */
+            url: string;
+            /** @description Event names this webhook subscribes to. */
+            events: string[];
+            /** @description Whether the webhook is active. */
+            is_active: boolean;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 last-update timestamp. */
+            updated_at: string;
+            /** @description Signing secret, if set. */
+            secret: string | null;
+        };
+        UpsertSandboxSnapshotSourcesRequest: {
+            /** @description Snapshot sources to upsert (at least one). */
+            sources: {
+                /** @description Project the source belongs to, or null if generic. */
+                project_id: number | null;
+                /**
+                 * @description Sandbox provider.
                  * @enum {string}
                  */
-                state: "open" | "closed" | "merged";
-            } | null;
-            /** @description Resolved details for the user that created the run. */
-            created_by_user_detail: {
-                /** @description Supabase user ID. */
-                id: string;
-                /** @description User email address. */
-                email: string;
-                /** @description User display name. */
-                name: string;
-                /** @description User avatar URL. */
-                picture: string;
-            } | null;
-        };
-        TriageStatusListResponse: {
-            /** @description Response payload. */
-            data: {
-                triage_statuses: components["schemas"]["TriageStatus"][];
-            };
-        };
-        TriageStatus: {
-            id: string;
-            project_id: number;
-            test_run_id: number;
-            pw_test_id: string;
-            /** @enum {string} */
-            status: "working" | "completed";
-            group_id: string | null;
-            group: components["schemas"]["TriageStatusGroup"];
-            chat_session_id: number | null;
-            created_at: string;
-            updated_at: string;
-        };
-        TriageStatusGroup: {
-            id: string;
-            label: string;
-            /** @enum {string} */
-            type: "app" | "test" | "unknown";
-            /** @enum {string} */
-            status: "open" | "resolved";
-            diagnosis: string | null;
-            recommendation: string | null;
-        } | null;
-        TriageStatusResponse: {
-            /** @description Response payload. */
-            data: {
-                triage_status: components["schemas"]["TriageStatus"];
-            };
+                provider: "e2b" | "docker" | "vercel";
+                /** @description Snapshot source identifier (e.g. template ID). */
+                source_name: string;
+                /** @description Playwright version the snapshot was built with. */
+                playwright_version: string;
+                /** @description Base template the source was built from. */
+                base_template: string;
+                /** @description Hash of the package lockfile, if known. */
+                package_lock_hash?: string | null;
+                /** @description Base branch the snapshot was built from, if known. */
+                base_branch?: string | null;
+                /** @description Head commit SHA the snapshot was built from. */
+                head_sha?: string | null;
+            }[];
         };
         UpsertTriageStatusRequest: {
             /** @description The run in which this failure was observed. */
@@ -11538,298 +15675,181 @@ export interface components {
             /** @description The failure group this failure resolved to (the group carries the verdict and diagnosis). Omit to keep the stored value; null clears it. */
             group_id?: string | null;
         };
-        FailureGroupListResponse: {
-            data: {
-                failure_groups: components["schemas"]["FailureGroup"][];
-            };
-            pagination: components["schemas"]["Pagination"];
-        };
-        FailureGroup: {
-            id: string;
-            project_id: number;
-            label: string;
-            /** @enum {string} */
-            type: "app" | "test" | "unknown";
-            /** @enum {string} */
-            status: "open" | "resolved";
-            diagnosis: string | null;
-            recommendation: string | null;
-            fingerprint: components["schemas"]["Fingerprint"];
-            matcher: components["schemas"]["FailureGroupMatcher"];
-            resolved_at: string | null;
-            first_seen_at: string;
-            last_seen_at: string;
-            last_test_run_id: number | null;
-            created_at: string;
-            updated_at: string;
-        };
-        Fingerprint: {
-            signals: {
-                kind: string;
-                value: string;
-                /** @enum {string} */
-                match?: "exact" | "contains" | "glob" | "regex";
-                weight?: number;
-                /** @enum {string} */
-                source: "machine" | "agent" | "human";
-                data?: {
-                    [key: string]: unknown;
-                };
-            }[];
-        } | null;
-        FailureGroupMatcher: {
-            /** @description Plain-JS async function source: `async ({ testRun, testCase, traceUtils }) => boolean`. */
-            source: string;
-            /** @description Human-readable summary of what the matcher matches and why; re-articulated on every edit. */
-            description: string;
+        UsageLimit: {
+            /** @description Whether the org's plan supports a usage limit (catalog plans with overage pricing). */
+            available: boolean;
+            /** @description Most overage allowed per usage period (calendar month, or Dodo billing cycle), in cents of the plan currency. Null means no limit. */
+            cap_cents: number | null;
             /**
-             * @description Input-contract version the source was written against.
-             * @default 1
-             */
-            contract_version: number;
-        } | null;
-        MembersByTestRunResponse: {
-            /** @description Response payload. */
-            data: {
-                members: components["schemas"]["MemberByTestRun"][];
-            };
-        };
-        MemberByTestRun: {
-            /** @description Test case ID (normalized 41-character Playwright test id). */
-            test_case_id: string;
-            group_id: string;
-            label: string | null;
-            /** @enum {string|null} */
-            type: "app" | "test" | null;
-            /** @enum {string|null} */
-            status: "open" | "resolved" | null;
-            diagnosis: string | null;
-            recommendation: string | null;
-            /** @enum {string|null} */
-            match_source: "machine" | "agent" | "human" | "system" | null;
-            match_score: number | null;
-            chat_session_id: number | null;
-            matched_at: string | null;
-            detached_at: string | null;
-        };
-        FailureGroupResponse: {
-            /** @description Response payload. */
-            data: {
-                failure_group: components["schemas"]["FailureGroup"];
-            };
-        };
-        FailureGroupActivityResponse: {
-            /** @description Response payload. */
-            data: {
-                events: components["schemas"]["FailureGroupActivityEvent"][];
-            };
-        };
-        FailureGroupActivityEvent: {
-            id: string;
-            /** @enum {string} */
-            type: "created" | "edited" | "status_changed" | "merged" | "member_added" | "member_seen" | "member_removed";
-            at: string;
-            source_run_id: number | null;
-            changed_fields: string[] | null;
-            from_status: string | null;
-            to_status: string | null;
-            merged_from_group_id: string | null;
-            merged_from_label: string | null;
-            member: {
-                /** @description Test case ID (normalized 41-character Playwright test id). */
-                test_case_id: string;
-                environment_id: number | null;
-                match_source: string | null;
-                match_score: number | null;
-                /** @description For agent-attached members, the chat session that decided the attach. */
-                chat_session_id: number | null;
-            } | null;
-            /** @description Who authored the change. Null on machine-driven member events and on changes made before attribution existed. */
-            actor: {
-                /** @enum {string} */
-                kind: "user" | "agent" | "api_key" | "system";
-                id: string | null;
-                name: string | null;
-                email: string | null;
-            } | null;
-        };
-        FailureGroupMembersResponse: {
-            /** @description Response payload. */
-            data: {
-                members: components["schemas"]["FailureGroupMemberEntry"][];
-                total: number;
-                page: number;
-                per_page: number;
-            };
-        };
-        FailureGroupMemberEntry: {
-            /** @description Test case ID (normalized 41-character Playwright test id). */
-            test_case_id: string;
-            /** @enum {string} */
-            state: "active" | "detached";
-            /** @enum {string} */
-            source: "machine" | "agent" | "human" | "system";
-            first_seen_at: string;
-            first_test_run_id: number | null;
-            last_seen_at: string;
-            last_test_run_id: number | null;
-            last_environment_id: number | null;
-            environments: number[];
-            sighting_count: number;
-            chat_session_id: number | null;
-            match_run_id: string | null;
-            actor_id: string | null;
-            detached_at: string | null;
-            detached_by: string | null;
-        };
-        FailureGroupConflictResponse: {
-            data: {
-                failure_group: components["schemas"]["FailureGroup"];
-            };
-            error: {
-                message: string;
-            };
-        };
-        CreateFailureGroupRequest: {
-            /** @description Human label for the failure mode (the group_key). */
-            label: string;
-            /**
-             * @description app or test issue.
+             * @description `warning` once the bill (plan + overage) reaches 80% of plan + cap, skipped when that is at or below the plan price (including a $0 limit); `reached` when new work is paused.
              * @enum {string}
              */
-            type: "app" | "test";
-            /** @description Markdown root-cause summary. */
-            diagnosis: string;
-            /** @description What to do next. */
-            recommendation: string;
-            /** @description Identifying signals for future matching. */
-            fingerprint?: {
-                signals: {
+            status: "none" | "ok" | "warning" | "reached";
+            /** @description When the limit was reached this period (ISO 8601). */
+            reached_at: string | null;
+            updated_at: string | null;
+            /** @description Who made a change. */
+            updated_by: {
+                /** @description user | agent | api_key | system */
+                kind: string;
+                id: string | null;
+                /** @description User name, when a user. */
+                name: string | null;
+            } | null;
+        };
+        UsageLimitEvent: {
+            id: number;
+            /** @description spend_cap.set | spend_cap.removed | spend_cap.alert_sent | spend_cap.reached | spend_cap.cleared */
+            action: string;
+            /** @description Who made a change. */
+            actor: {
+                /** @description user | agent | api_key | system */
+                kind: string;
+                id: string | null;
+                /** @description User name, when a user. */
+                name: string | null;
+            };
+            before?: unknown;
+            after?: unknown;
+            metadata?: unknown;
+            created_at: string;
+        };
+        UsageLimitEventsResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["UsageLimitEvent"][];
+        };
+        UsageLimitResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Whether the org's plan supports a usage limit (catalog plans with overage pricing). */
+                available: boolean;
+                /** @description Most overage allowed per usage period (calendar month, or Dodo billing cycle), in cents of the plan currency. Null means no limit. */
+                cap_cents: number | null;
+                /**
+                 * @description `warning` once the bill (plan + overage) reaches 80% of plan + cap, skipped when that is at or below the plan price (including a $0 limit); `reached` when new work is paused.
+                 * @enum {string}
+                 */
+                status: "none" | "ok" | "warning" | "reached";
+                /** @description When the limit was reached this period (ISO 8601). */
+                reached_at: string | null;
+                updated_at: string | null;
+                /** @description Who made a change. */
+                updated_by: {
+                    /** @description user | agent | api_key | system */
                     kind: string;
-                    value: string;
-                    /** @enum {string} */
-                    match?: "exact" | "contains" | "glob" | "regex";
-                    weight?: number;
-                    /** @enum {string} */
-                    source: "machine" | "agent" | "human";
-                    data?: {
-                        [key: string]: unknown;
-                    };
-                }[];
-            } | null;
-            /** @description The group's matcher function for future auto-matching. Attribution is derived from the caller, never the body. */
-            matcher?: {
-                /** @description Plain-JS async function source: `async ({ testRun, testCase, traceUtils }) => boolean`. */
-                source: string;
-                /** @description Human-readable summary of what the matcher matches and why; re-articulated on every edit. */
-                description: string;
-                /**
-                 * @description Input-contract version the source was written against.
-                 * @default 1
-                 */
-                contract_version: number;
-            } | null;
-            /** @description Run this diagnosis is based on (provenance). */
-            source_run_id?: number | null;
-        };
-        PatchFailureGroupRequest: {
-            label?: string;
-            /** @enum {string} */
-            type?: "app" | "test";
-            /** @enum {string} */
-            status?: "open" | "resolved";
-            diagnosis?: string;
-            recommendation?: string;
-            /** @description Present → replaces the stored fingerprint wholesale; omit to keep it. */
-            fingerprint?: {
-                signals: {
-                    kind: string;
-                    value: string;
-                    /** @enum {string} */
-                    match?: "exact" | "contains" | "glob" | "regex";
-                    weight?: number;
-                    /** @enum {string} */
-                    source: "machine" | "agent" | "human";
-                    data?: {
-                        [key: string]: unknown;
-                    };
-                }[];
-            } | null;
-            /** @description Present → replaces the stored matcher wholesale (null clears it); omit to keep it. Re-submitting an identical source + description is a no-op (no revision). */
-            matcher?: {
-                /** @description Plain-JS async function source: `async ({ testRun, testCase, traceUtils }) => boolean`. */
-                source: string;
-                /** @description Human-readable summary of what the matcher matches and why; re-articulated on every edit. */
-                description: string;
-                /**
-                 * @description Input-contract version the source was written against.
-                 * @default 1
-                 */
-                contract_version: number;
-            } | null;
-            source_run_id?: number | null;
-        };
-        FailureGroupMemberResponse: {
-            /** @description Response payload. */
-            data: {
-                member: components["schemas"]["FailureGroupMemberEntry"];
+                    id: string | null;
+                    /** @description User name, when a user. */
+                    name: string | null;
+                } | null;
             };
         };
-        AttachFailureGroupMemberRequest: {
-            /** @description The run in which this failure was observed. */
-            test_run_id: number;
-            /** @description Test case ID (normalized 41-character Playwright test id) of the failing test. */
-            test_case_id?: string;
-            /**
-             * @deprecated
-             * @description Deprecated alias of `test_case_id`.
-             */
-            pw_test_id?: string;
-        };
-        FailureGroupDetachMemberResponse: {
+        UserDetailResponse: {
             /** @description Response payload. */
             data: {
-                group_id: string;
-                test_case_id: string;
-                detached: boolean;
-            };
-        };
-        FailureGroupShareResponse: {
-            /** @description Response payload. */
-            data: {
-                /**
-                 * @description Always true on success.
-                 * @enum {boolean}
-                 */
-                ok: true;
-            };
-        };
-        ShareFailureGroupRequest: {
-            /** @description The share destination. */
-            target: {
-                /** @enum {string} */
-                type: "slack";
-                /** @description Slack channel ID to post to. */
-                channel_id: string;
-                /** @description Thread timestamp to reply under, if any. */
-                thread_ts?: string;
-            };
-        };
-        MergeFailureGroupRequest: {
-            /** @description Target group id; this group merges into it. */
-            into_group_id: string;
-        };
-        DeleteFailureGroupResponse: {
-            /** @description Response payload. */
-            data: {
+                /** @description Supabase user ID. */
                 id: string;
-                deleted: boolean;
+                /** @description User email. */
+                email: string;
+                /** @description User display name. */
+                name: string;
+                /** @description User avatar URL. */
+                picture: string;
+                /** @description Accounts linked to this user. */
+                connected_accounts: {
+                    /** @description Valid linked Slack accounts. */
+                    slack: components["schemas"]["ConnectedSlackAccount"][];
+                    /** @description Valid linked GitHub accounts. */
+                    github: components["schemas"]["ConnectedGithubAccount"][];
+                };
             };
         };
-        WebhookListResponse: {
+        UserLinkDeleteResponse: {
             /** @description Response payload. */
             data: {
-                webhooks: components["schemas"]["Webhook"][];
+                /** @description Always true on successful deletion. */
+                success: boolean;
+            };
+        };
+        UserWithConnectedAccounts: {
+            /** @description Supabase user ID. */
+            id: string;
+            /** @description User email. */
+            email: string;
+            /** @description User display name. */
+            name: string;
+            /** @description User avatar URL. */
+            picture: string;
+            /** @description Accounts linked to this user. */
+            connected_accounts: {
+                /** @description Valid linked Slack accounts. */
+                slack: components["schemas"]["ConnectedSlackAccount"][];
+                /** @description Valid linked GitHub accounts. */
+                github: components["schemas"]["ConnectedGithubAccount"][];
+            };
+        };
+        UsersListResponse: {
+            /** @description Response payload. */
+            data: components["schemas"]["UserWithConnectedAccounts"][];
+        };
+        ValidatedSlackChannelV2: {
+            /** @description Canonical Slack channel ID. */
+            id: number;
+            /** @description Organization scope ID. */
+            org_id: number;
+            /** @description Slack app installation ID, or null for the shared default installation. */
+            slack_app_install_id: number | null;
+            /**
+             * @description Credential source used to access the Slack workspace.
+             * @enum {string}
+             */
+            installation_source: "default" | "org";
+            /** @description Slack workspace (team) ID. */
+            team_id: string;
+            /** @description Slack channel ID. */
+            channel_id: string;
+            /** @description Last known Slack channel name. */
+            channel_name: string | null;
+            /** @description ISO 8601 archival timestamp. */
+            archived_at: string | null;
+            /** @description ISO 8601 creation timestamp. */
+            created_at: string;
+            /** @description ISO 8601 update timestamp. */
+            updated_at: string;
+            /** @description Live Slack validation result. */
+            slack_channel_validation: {
+                /** @description Whether the bot can read the channel and its stored name matches Slack. */
+                ok: boolean;
+                /** @description Slack channel ID. */
+                channel_id: string;
+                /** @description Whether the bot can read the channel through Slack. */
+                can_access: boolean;
+                /** @description Whether the bot can read the channel. */
+                is_member?: boolean;
+                /** @description Current channel name returned by Slack. */
+                current_channel_name?: string | null;
+                /** @description Whether the stored channel name matches Slack's current name. */
+                channel_name_matches?: boolean;
+                /** @description Machine-readable validation failure code. */
+                error_code?: string;
+                /** @description Human-readable validation result. */
+                message?: string;
+            };
+        };
+        VerifyInvoiceRazorpayPaymentRequest: {
+            /** @description Order id returned by razorpay-order. */
+            razorpay_order_id: string;
+            /** @description Payment id from the checkout success handler. */
+            razorpay_payment_id: string;
+            /** @description Checkout signature: hex HMAC-SHA256 of `order_id|payment_id`. */
+            razorpay_signature: string;
+        };
+        VerifyInvoiceRazorpayPaymentResponse: {
+            /** @description Response payload. */
+            data: {
+                /** @description Invoice paid status after settling. */
+                paid_status: string;
+                /** @description Total settled amount in paise after this payment. */
+                paid_minor: number;
             };
         };
         Webhook: {
@@ -11854,68 +15874,6 @@ export interface components {
                 webhook: components["schemas"]["CreatedWebhook"];
             };
         };
-        CreatedWebhook: {
-            /** @description Webhook ID. */
-            id: number;
-            /** @description Project the webhook belongs to. */
-            project_id: number;
-            /** @description Endpoint that receives event payloads. */
-            url: string;
-            /** @description Event names this webhook subscribes to. */
-            events: string[];
-            /** @description Whether the webhook is active. */
-            is_active: boolean;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-            /** @description Signing secret (returned only on creation). */
-            secret: string;
-        };
-        CreateWebhookRequest: {
-            /**
-             * Format: uri
-             * @description HTTPS endpoint that will receive event payloads.
-             */
-            url: string;
-            /** @description Event names this webhook subscribes to. */
-            events: string[];
-        };
-        WebhookUpdateResponse: {
-            /** @description Response payload. */
-            data: {
-                webhook: components["schemas"]["UpdatedWebhook"];
-            };
-        };
-        UpdatedWebhook: {
-            /** @description Webhook ID. */
-            id: number;
-            /** @description Project the webhook belongs to. */
-            project_id: number;
-            /** @description Endpoint that receives event payloads. */
-            url: string;
-            /** @description Event names this webhook subscribes to. */
-            events: string[];
-            /** @description Whether the webhook is active. */
-            is_active: boolean;
-            /** @description ISO 8601 creation timestamp. */
-            created_at: string;
-            /** @description ISO 8601 last-update timestamp. */
-            updated_at: string;
-            /** @description Signing secret, if set. */
-            secret: string | null;
-        };
-        UpdateWebhookRequest: {
-            /**
-             * Format: uri
-             * @description New HTTPS endpoint for event payloads.
-             */
-            url?: string;
-            /** @description New set of event names to subscribe to. */
-            events?: string[];
-            /** @description Whether the webhook is active. */
-            is_active?: boolean;
-        };
         WebhookDeleteResponse: {
             /** @description Response payload. */
             data: {
@@ -11924,6 +15882,12 @@ export interface components {
                  * @enum {boolean}
                  */
                 success: true;
+            };
+        };
+        WebhookListResponse: {
+            /** @description Response payload. */
+            data: {
+                webhooks: components["schemas"]["Webhook"][];
             };
         };
         WebhookTestResponse: {
@@ -11937,322 +15901,11 @@ export interface components {
                 error: string | null;
             };
         };
-        DodoWebhookAckResponse: {
-            /** @description Ack. */
-            message: string;
-        };
-        RazorpayWebhookAckResponse: {
-            /** @description Acknowledgement. */
-            message: string;
-        };
-        HiveModelsResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["HiveModel"][];
-        };
-        HiveModel: {
-            /** @description Canonical id, e.g. "anthropic/claude-sonnet-4-5-20250929". */
-            id: string;
-            /** @description Human-friendly label, e.g. "Claude Sonnet 4.5 (Vertex)". */
-            label: string;
-            /** @description Provider portion of the id, e.g. "anthropic" or "vertex-anthropic". */
-            provider: string;
-            /** @description Context window in tokens, from the provider catalog. Optional so clients keep working against Hive deployments that predate the field. */
-            context_window?: number;
-        };
-        PlaywrightUtilsProxyResponse: {
-            /** @description Parsed JSON body returned by the upstream provider, or null when the response was not JSON. */
-            data?: unknown;
-            /** @description Response headers returned by the upstream provider. */
-            headers: {
-                [key: string]: string;
-            };
-        };
-        PlaywrightUtilsProxyError: {
-            /** @description Error message — the provider API key is not configured, or the proxied request failed. */
-            error: string;
-        };
-        PlaywrightUtilsProxyRequest: {
-            /** @description HTTP method to forward to the upstream provider. */
-            method: string;
-            /** @description Provider path (and query string) to call, starting with `/`. Appended to the provider's base URL. */
-            path: string;
-            /** @description Optional JSON body to forward to the upstream provider. */
-            body?: unknown;
-        };
-        TwoCaptchaProxyResponse: unknown;
-        TwoCaptchaProxyRequest: {
-            /**
-             * @description 2Captcha endpoint to call.
-             * @enum {string}
-             */
-            endpoint: "/createTask" | "/getTaskResult";
-            /** @description Request payload forwarded to 2Captcha. The configured `clientKey` is injected server-side. */
-            body?: {
-                [key: string]: unknown;
-            };
-        };
-        ProjectMetricsResponse: {
+        WebhookUpdateResponse: {
             /** @description Response payload. */
             data: {
-                /** @description Chat sessions created in the project in the last 7 days. */
-                sessionsCreated: number;
-                /** @description Chat sessions whose PR was merged in the project in the last 7 days. */
-                sessionsMerged: number;
-                /** @description Tests added across merged sessions in the last 7 days. */
-                testsAdded: number;
-                /** @description Tests modified across merged sessions in the last 7 days. */
-                testsModified: number;
-                /** @description Up to 10 most recently added tests. */
-                recentlyAddedTests?: components["schemas"]["MetricsImpactedTestSummary"][];
-                /** @description Up to 10 most recently modified tests. */
-                recentlyModifiedTests?: components["schemas"]["MetricsImpactedTestSummary"][];
+                webhook: components["schemas"]["UpdatedWebhook"];
             };
-        };
-        MetricsImpactedTestSummary: {
-            /** @description Name of the impacted Playwright test. */
-            testName: string;
-            /** @description File path of the impacted test. */
-            filePath: string;
-            /** @description ID of the chat session whose merged PR changed this test. */
-            sessionId: number;
-            /** @description ISO 8601 timestamp the session was last updated. */
-            updatedAt: string;
-        };
-        RealtimeTokenResponse: {
-            /** @description Signed token to authenticate the WebSocket. */
-            token: string;
-            /** @description Unix epoch (seconds) when the token expires. */
-            expires_at: number;
-        };
-        RealtimeUnavailableResponse: {
-            /** @description Reason the realtime service is unavailable. */
-            error: string;
-        };
-        UsersListResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["UserWithConnectedAccounts"][];
-        };
-        UserWithConnectedAccounts: {
-            /** @description Supabase user ID. */
-            id: string;
-            /** @description User email. */
-            email: string;
-            /** @description User display name. */
-            name: string;
-            /** @description User avatar URL. */
-            picture: string;
-            /** @description Accounts linked to this user. */
-            connected_accounts: {
-                /** @description Valid linked Slack accounts. */
-                slack: components["schemas"]["ConnectedSlackAccount"][];
-                /** @description Valid linked GitHub accounts. */
-                github: components["schemas"]["ConnectedGithubAccount"][];
-            };
-        };
-        ConnectedSlackAccount: {
-            /** @description Slack user ID. */
-            user_id: string;
-            /** @description Slack username. */
-            user_name: string | null;
-            /** @description Slack real name. */
-            real_name: string | null;
-            /** @description Slack display name. */
-            display_name: string | null;
-            /** @description Slack avatar image URL. */
-            image_url: string | null;
-            /** @description Slack team (workspace) ID. */
-            team_id: string;
-        };
-        ConnectedGithubAccount: {
-            /** @description GitHub numeric user ID. */
-            user_id: string;
-            /** @description GitHub login/username. */
-            username: string;
-            /** @description GitHub display name. */
-            display_name: string | null;
-            /** @description GitHub avatar URL. */
-            avatar_url: string | null;
-        };
-        GithubLinkListResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["GithubUserLink"][];
-        };
-        GithubUserLink: {
-            /** @description Link ID. */
-            id: number;
-            /** @description Supabase user ID. */
-            user_id: string;
-            /** @description GitHub numeric user ID. */
-            github_user_id: string;
-            /** @description GitHub login/username. */
-            github_username: string;
-            /** @description GitHub display name. */
-            github_display_name: string | null;
-            /** @description GitHub avatar URL. */
-            github_avatar_url: string | null;
-            /** @description GitHub account email. */
-            github_email: string | null;
-            /** @description Whether the link is currently valid. */
-            is_link_valid: boolean | null;
-            /** @description ISO 8601 timestamp the link was last validated. */
-            last_validated_at: string | null;
-            /** @description ISO 8601 timestamp the link was created. */
-            created_at: string;
-            /** @description ISO 8601 timestamp the link was last updated. */
-            updated_at: string;
-        };
-        GithubLinkUpsertResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description The created or updated GitHub link. */
-                link: {
-                    /** @description Link ID. */
-                    id: number;
-                    /** @description Supabase user ID. */
-                    user_id: string;
-                    /** @description GitHub numeric user ID. */
-                    github_user_id: string;
-                    /** @description GitHub login/username. */
-                    github_username: string;
-                    /** @description GitHub display name. */
-                    github_display_name: string | null;
-                    /** @description GitHub avatar URL. */
-                    github_avatar_url: string | null;
-                    /** @description GitHub account email. */
-                    github_email: string | null;
-                    /** @description Whether the link is currently valid. */
-                    is_link_valid: boolean | null;
-                    /** @description ISO 8601 timestamp the link was last validated. */
-                    last_validated_at: string | null;
-                    /** @description ISO 8601 timestamp the link was created. */
-                    created_at: string;
-                    /** @description ISO 8601 timestamp the link was last updated. */
-                    updated_at: string;
-                } | null;
-            };
-        };
-        UserLinkDeleteResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Always true on successful deletion. */
-                success: boolean;
-            };
-        };
-        SlackLinkListResponse: {
-            /** @description Response payload. */
-            data: components["schemas"]["SlackUserLink"][];
-        };
-        SlackUserLink: {
-            /** @description Link ID. */
-            id: number;
-            /** @description Whether the link is currently valid. */
-            is_link_valid: boolean | null;
-            /** @description ISO 8601 timestamp the link was last validated. */
-            last_validated_at: string | null;
-            /** @description Supabase user ID. */
-            user_id: string;
-            /** @description Slack workspace whose app installation reaches the user. */
-            team_id: string;
-            /** @description Slack user's home workspace ID. */
-            slack_home_team_id: string | null;
-            /**
-             * Format: uri
-             * @description Slack user's home workspace URL.
-             */
-            slack_home_team_url: string | null;
-            /** @description Slack user ID. */
-            slack_user_id: string;
-            /** @description Slack username. */
-            slack_user_name: string | null;
-            /** @description Slack avatar image URL. */
-            slack_image_url: string | null;
-            /** @description Slack real name. */
-            slack_user_real_name: string | null;
-            /** @description Slack display name. */
-            slack_user_display_name: string | null;
-            /** @description Whether the Slack user is a workspace admin. */
-            slack_is_admin: string | null;
-            /** @description Whether the Slack user is a bot. */
-            slack_is_bot: string | null;
-            /** @description Slack DM channel ID for the user. */
-            slack_dm_channel_id: string | null;
-            /** @description ISO 8601 timestamp the DM channel was resolved. */
-            slack_dm_channel_updated_at: string | null;
-            /** @description Slack app ID the link belongs to (provenance only). */
-            app_id: string | null;
-            /** @description How the link was created. */
-            source: string;
-            /** @description ISO 8601 timestamp the link was created. */
-            created_at: string;
-            /** @description ISO 8601 timestamp the link was last updated. */
-            updated_at: string;
-        };
-        MembershipListResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Memberships created from pending invites. */
-                memberships: {
-                    /** @description Organization joined. */
-                    org_id: number;
-                }[];
-            };
-        };
-        UserDetailResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Supabase user ID. */
-                id: string;
-                /** @description User email. */
-                email: string;
-                /** @description User display name. */
-                name: string;
-                /** @description User avatar URL. */
-                picture: string;
-                /** @description Accounts linked to this user. */
-                connected_accounts: {
-                    /** @description Valid linked Slack accounts. */
-                    slack: components["schemas"]["ConnectedSlackAccount"][];
-                    /** @description Valid linked GitHub accounts. */
-                    github: components["schemas"]["ConnectedGithubAccount"][];
-                };
-            };
-        };
-        PlaywrightVersionsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Supported Playwright versions, newest first. */
-                versions: string[];
-                /** @description The Playwright version used when none is chosen. */
-                default_version: string;
-            };
-        };
-        CreateUploadUrlsResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description One presigned upload URL per requested file. */
-                presigned_urls: components["schemas"]["PresignedUploadUrl"][];
-            };
-            /** @description Always null on success. */
-            error: unknown;
-        };
-        PresignedUploadUrl: {
-            /** @description The original file name. */
-            file_name: string;
-            /** @description Presigned PUT URL; upload with the same MIME type. */
-            upload_url: string;
-            /** @description Object key (`destination_dir/name`) in the bucket. */
-            key: string;
-        };
-        LoomUploadResponse: {
-            /** @description Response payload. */
-            data: {
-                /** @description Public URL of the uploaded video in R2. */
-                url: string;
-                /** @description Stored file name (`loom-<id>.<ext>`). */
-                name: string;
-            };
-            /** @description Always null on success. */
-            error: unknown;
         };
     };
     responses: never;
@@ -12344,8 +15997,17 @@ export interface operations {
                     "application/json": components["schemas"]["CreateTestRunResponse"];
                 };
             };
-            /** @description Invalid request, unknown environment, conflicting branch selectors, pierre code-storage repo, or the project could not be resolved. */
+            /** @description Invalid request, unknown environment, pierre code-storage repo, or the project could not be resolved. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Billing blocked: an overdue invoice, a failed renewal, no active plan, or the spend limit reached. */
+            402: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12395,7 +16057,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Project, test run, or environment not found. */
+            /** @description Test run not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12592,6 +16254,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Billing blocked: an overdue invoice, a failed renewal, no active plan, or the spend limit reached. */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Source test run or environment not found. */
             404: {
                 headers: {
@@ -12686,7 +16357,7 @@ export interface operations {
             };
         };
     };
-    listTestRunShareTargets: {
+    listTestRunChatSessions: {
         parameters: {
             query?: never;
             header?: never;
@@ -12698,16 +16369,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Slack share destinations. */
+            /** @description Sessions linked to the run. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TriageShareTargetsResponse"];
+                    "application/json": components["schemas"]["ListTestRunChatSessionsResponse"];
                 };
             };
-            /** @description Invalid project header. */
+            /** @description Invalid database test run ID. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12716,7 +16387,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Test run not found or not accessible. */
+            /** @description Test run not found or inaccessible. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12791,6 +16462,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TestRunEnvironmentVariablesResponse"];
+                };
+            };
+            /** @description Test run not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getTestRunLinkedChanges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Test run database ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run's linked test changes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestRunLinkedChangesResponse"];
+                };
+            };
+            /** @description Invalid database test run ID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Test run not found. */
@@ -13819,7 +17531,7 @@ export interface operations {
                     "application/json": components["schemas"]["EnvironmentResponse"];
                 };
             };
-            /** @description Invalid request, the slug already exists, or reporter_config names an unknown Slack channel id. */
+            /** @description Invalid request, the slug already exists, or reporter_config names an unknown Slack channel. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -13914,7 +17626,7 @@ export interface operations {
                     "application/json": components["schemas"]["Environment"];
                 };
             };
-            /** @description Invalid request, the slug already exists, or reporter_config names an unknown Slack channel id. */
+            /** @description Invalid request, the slug already exists, or reporter_config names an unknown Slack channel. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -14624,6 +18336,56 @@ export interface operations {
             };
         };
     };
+    refreshSlackAppScopes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description OAuth code from Slack's redirect. */
+                    code: string;
+                    /**
+                     * Format: uri
+                     * @description Redirect URI the authorize request used.
+                     */
+                    redirect_uri: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The scopes were refreshed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackScopeRefreshResponse"];
+                };
+            };
+            /** @description The code was for another workspace. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Slack rejected the OAuth code. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     slackAuthTest: {
         parameters: {
             query?: never;
@@ -14721,22 +18483,29 @@ export interface operations {
                 "application/json": {
                     /** @description Organisation ID. */
                     org_id: number;
-                    /** @description Slack app ID. */
-                    slack_app_id: string;
-                    /** @description Authorizing Slack user ID. */
-                    authed_user_id: string;
-                    /** @description OAuth scopes (CSV). */
-                    scope: string;
-                    /** @description OAuth token type. */
-                    token_type: string;
-                    /** @description OAuth access token. */
-                    access_token: string;
-                    /** @description Bot user ID. */
-                    bot_user_id: string;
-                    /** @description Slack workspace (team) ID. */
-                    team_id: string;
-                    /** @description Slack workspace name. */
-                    team_name: string;
+                    /** @description OAuth code from Slack's redirect. Required for a signed-in user. */
+                    code?: string;
+                    /**
+                     * Format: uri
+                     * @description Redirect URI the authorize request used; Slack requires it to match. Required with `code`.
+                     */
+                    redirect_uri?: string;
+                    /** @description Slack app ID. System callers only. */
+                    slack_app_id?: string;
+                    /** @description Authorizing Slack user ID. System callers only. */
+                    authed_user_id?: string;
+                    /** @description OAuth scopes (CSV). System callers only. */
+                    scope?: string;
+                    /** @description OAuth token type. System callers only. */
+                    token_type?: string;
+                    /** @description OAuth access token. System callers only. */
+                    access_token?: string;
+                    /** @description Bot user ID. System callers only. */
+                    bot_user_id?: string;
+                    /** @description Slack workspace (team) ID. System callers only. */
+                    team_id?: string;
+                    /** @description Slack workspace name. System callers only. */
+                    team_name?: string;
                 };
             };
         };
@@ -14747,11 +18516,20 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SlackAppInstallMutationResponse"];
+                    "application/json": components["schemas"]["SlackAppInstallUpsertResponse"];
                 };
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Slack rejected the OAuth code. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15270,8 +19048,21 @@ export interface operations {
                 "application/json": {
                     /** @description Markdown message body; not Slack's text field. */
                     markdown: string;
-                    /** @description Actions the message intentionally offers. Omit this field for informational messages, including merged or closed PR updates. */
-                    supported_actions?: components["schemas"]["SlackSupportedAction"][];
+                    /** @description Agent-defined buttons; each requires exactly one of input or url. Input choices are single-use for the entire message: the first authorized selection removes all input buttons and publicly records who chose what. URL buttons remain available and never wake the agent. Selection requests an operation; the agent must report its outcome separately. Omit when no buttons are needed. */
+                    actions?: ({
+                        /** @description Button text shown to the user. */
+                        label: string;
+                        /** @description Text sent to this message's originating agent when selected. Supply enough context to act on it. */
+                        input: string;
+                    } | {
+                        /** @description Button text shown to the user. */
+                        label: string;
+                        /**
+                         * Format: uri
+                         * @description HTTP(S) destination opened by this repeatable navigation button. Does not send input to the agent or consume the message's choices.
+                         */
+                        url: string;
+                    })[];
                     /** @description Slack channel or existing DM channel ID. */
                     channel: string;
                     /** @description Root timestamp of the thread to reply to. Omit for a top-level post. */
@@ -15281,8 +19072,21 @@ export interface operations {
                 } | {
                     /** @description Markdown message body; not Slack's text field. */
                     markdown: string;
-                    /** @description Actions the message intentionally offers. Omit this field for informational messages, including merged or closed PR updates. */
-                    supported_actions?: components["schemas"]["SlackSupportedAction"][];
+                    /** @description Agent-defined buttons; each requires exactly one of input or url. Input choices are single-use for the entire message: the first authorized selection removes all input buttons and publicly records who chose what. URL buttons remain available and never wake the agent. Selection requests an operation; the agent must report its outcome separately. Omit when no buttons are needed. */
+                    actions?: ({
+                        /** @description Button text shown to the user. */
+                        label: string;
+                        /** @description Text sent to this message's originating agent when selected. Supply enough context to act on it. */
+                        input: string;
+                    } | {
+                        /** @description Button text shown to the user. */
+                        label: string;
+                        /**
+                         * Format: uri
+                         * @description HTTP(S) destination opened by this repeatable navigation button. Does not send input to the agent or consume the message's choices.
+                         */
+                        url: string;
+                    })[];
                     /** @description Recipient Slack user ID. Creates a new DM root; in-thread replies return to the sending session. */
                     slack_user_id: string;
                     /** @description Required for recipient-addressed sends. Each send creates a new DM root; root creation is not retry-safe if delivery or registration is uncertain. */
@@ -15290,8 +19094,21 @@ export interface operations {
                 } | {
                     /** @description Markdown message body; not Slack's text field. */
                     markdown: string;
-                    /** @description Actions the message intentionally offers. Omit this field for informational messages, including merged or closed PR updates. */
-                    supported_actions?: components["schemas"]["SlackSupportedAction"][];
+                    /** @description Agent-defined buttons; each requires exactly one of input or url. Input choices are single-use for the entire message: the first authorized selection removes all input buttons and publicly records who chose what. URL buttons remain available and never wake the agent. Selection requests an operation; the agent must report its outcome separately. Omit when no buttons are needed. */
+                    actions?: ({
+                        /** @description Button text shown to the user. */
+                        label: string;
+                        /** @description Text sent to this message's originating agent when selected. Supply enough context to act on it. */
+                        input: string;
+                    } | {
+                        /** @description Button text shown to the user. */
+                        label: string;
+                        /**
+                         * Format: uri
+                         * @description HTTP(S) destination opened by this repeatable navigation button. Does not send input to the agent or consume the message's choices.
+                         */
+                        url: string;
+                    })[];
                     /**
                      * Format: uuid
                      * @description Recipient Empirical UUID with one valid linked Slack account. Alternative to slack_user_id.
@@ -15339,6 +19156,159 @@ export interface operations {
                 };
             };
             /** @description Idempotency conflict. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageError"];
+                };
+            };
+            /** @description The thread was a test run's run-start notification, which was deleted when the run's final notification was posted. Reply in `replacement` instead. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackRunStartThreadReplacedError"];
+                };
+            };
+            /** @description Slack upstream error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageError"];
+                };
+            };
+        };
+    };
+    slackDeleteMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Slack channel or DM channel ID of the message. */
+                channel: string;
+                /** @description Timestamp id of the message, as returned by POST /api/slack/messages. */
+                ts: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Message deleted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageEditResult"];
+                };
+            };
+            /** @description Sandbox authentication required, or the channel is out of scope. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageError"];
+                };
+            };
+            /** @description No message posted by this project's agent at these coordinates. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageError"];
+                };
+            };
+            /** @description Slack upstream error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageError"];
+                };
+            };
+        };
+    };
+    slackUpdateMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Slack channel or DM channel ID of the message. */
+                channel: string;
+                /** @description Timestamp id of the message, as returned by POST /api/slack/messages. */
+                ts: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Replacement Markdown body; not Slack's text field. */
+                    markdown: string;
+                    /** @description Replacement buttons, with the same rules as POST /api/slack/messages. Omit to remove all buttons. */
+                    actions?: ({
+                        /** @description Button text shown to the user. */
+                        label: string;
+                        /** @description Text sent to this message's originating agent when selected. Supply enough context to act on it. */
+                        input: string;
+                    } | {
+                        /** @description Button text shown to the user. */
+                        label: string;
+                        /**
+                         * Format: uri
+                         * @description HTTP(S) destination opened by this repeatable navigation button. Does not send input to the agent or consume the message's choices.
+                         */
+                        url: string;
+                    })[];
+                };
+            };
+        };
+        responses: {
+            /** @description Message updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageEditResult"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageError"];
+                };
+            };
+            /** @description Sandbox authentication required, or the channel is out of scope. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageError"];
+                };
+            };
+            /** @description No message posted by this project's agent at these coordinates. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackMessageError"];
+                };
+            };
+            /** @description A button on the message was already selected. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -15550,6 +19520,103 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createSlackThreadEntityLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Registered Slack thread ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateSlackThreadEntityLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description The live entity link. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackThreadEntityLinkResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Slack thread or entity not found in this project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteSlackThreadEntityLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Registered Slack thread ID. */
+                id: number;
+                /** @description Entity link ID from the thread's `entity_links`. */
+                link_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The removed entity link. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackThreadEntityLinkResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Entity link not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description System links cannot be removed. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16126,6 +20193,199 @@ export interface operations {
             };
         };
     };
+    listFiles: {
+        parameters: {
+            query?: {
+                /** @description Page number (1-indexed). */
+                page?: number;
+                /** @description Items per page (max 100). */
+                per_page?: number;
+                /** @description Only files created by this chat session. */
+                origin_chat_session_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated list of files. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListFilesResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateFileRequest"];
+            };
+        };
+        responses: {
+            /** @description The created file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateFileResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description File ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileResponse"];
+                };
+            };
+            /** @description File not found in this project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description File ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UpdateFileRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description File not found in this project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The file content has not been uploaded yet. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listReporters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reporters for the project. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListReportersResponse"];
+                };
+            };
+            /** @description Missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found or not accessible. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listProjectResources: {
         parameters: {
             query?: {
@@ -16470,6 +20730,229 @@ export interface operations {
             };
         };
     };
+    listTasks: {
+        parameters: {
+            query?: {
+                /** @description Page number (1-indexed). */
+                page?: number;
+                /** @description Items per page. */
+                per_page?: number;
+                /** @description URL-encoded JSON array of generic filter conditions; malformed input is ignored. */
+                filters?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated list of tasks. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskListResponse"];
+                };
+            };
+            /** @description Invalid request or missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found or inaccessible. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description The created task. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateTaskResponse"];
+                };
+            };
+            /** @description Missing required fields, no person to own the task, or invalid input. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateTaskError"];
+                };
+            };
+            /** @description Project not found or inaccessible. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Failed to create task. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Task ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The task. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskResponse"];
+                };
+            };
+            /** @description Invalid task ID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Task not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Task ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deleted task ID. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedTaskResponse"];
+                };
+            };
+            /** @description Invalid task ID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Task not found or not deleted. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Task ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UpdateTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated task. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdatedTaskResponse"];
+                };
+            };
+            /** @description No fields to update or invalid input. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Task not found or not updated. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getOverlayDismissalSummary: {
         parameters: {
             query?: {
@@ -16579,8 +21062,12 @@ export interface operations {
                 page?: number;
                 /** @description Items per page (capped at 200). Default 50. */
                 per_page?: number;
-                /** @description Row order. `scheduled` (default) is manifest order — stable for a finished run. `recent` is most-recently-completed first, for the live view of an active run. */
-                order?: "scheduled" | "recent";
+                /** @description Row order. `scheduled` (default) is manifest order — stable for a finished run. `recent` is most-recently-completed first, for the live view of an active run. `duration` is slowest first (total time across attempts). `start_time` is earliest first attempt first; skipped tests last. */
+                order?: "scheduled" | "recent" | "duration" | "start_time";
+                /** @description Case-insensitive substring search over the test's full name (project, file, describe blocks, title), Playwright test id and failing line. Combines with `status`, `order` and paging; `pagination.total` counts the matches. Failing lines are searchable only for cases recorded after this parameter was added. */
+                q?: string;
+                /** @description When `true`, also returns cases that have reported at least one attempt but still have retries outstanding, marked `is_retrying: true`. Their `status` is provisional (from the attempts so far) and can change when the remaining retries land. Defaults to `false`. */
+                include_retrying?: "true" | "false";
             };
             header?: never;
             path: {
@@ -16622,7 +21109,10 @@ export interface operations {
     };
     getTestRunCase: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description When `true`, also returns cases that have reported at least one attempt but still have retries outstanding, marked `is_retrying: true`. Their `status` is provisional (from the attempts so far) and can change when the remaining retries land. Defaults to `false`. */
+                include_retrying?: "true" | "false";
+            };
             header?: never;
             path: {
                 /** @description Test run database ID. */
@@ -16737,7 +21227,7 @@ export interface operations {
                     timing: {
                         /** @enum {string} */
                         type: "delay";
-                        /** @description Relative delay using m/h/d units, such as "15m", "2h", or "1d". Min 15m, max 72h. */
+                        /** @description Relative delay using m/h/d units, such as "15m", "2h", or "1d". Min 5m, max 72h. */
                         delay: string;
                     } | {
                         /** @enum {string} */
@@ -16916,6 +21406,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description Invalid alarm */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Alarm not found */
             404: {
                 headers: {
@@ -16992,9 +21491,14 @@ export interface operations {
                                 entity_type: string;
                                 /** @description Exact entity id, or null when this trigger matches every entity. */
                                 entity_id: string | null;
-                                /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
+                                /** @description Optional payload filters. Keys must be allowed for the selected event in the canonical event catalog. A primitive value is an equality match, and enum-like fields only accept the values the event emits. Numeric fields also accept a comparison object such as {"gt": 2} or {"gte": 1, "lte": 5}; operators combine with AND and never match null. */
                                 payload_filter: {
-                                    [key: string]: string | number | boolean | unknown;
+                                    [key: string]: (string | number | boolean | {
+                                        gt?: number;
+                                        gte?: number;
+                                        lt?: number;
+                                        lte?: number;
+                                    }) | null;
                                 };
                                 message: string;
                                 /**
@@ -17039,9 +21543,14 @@ export interface operations {
                     event_type: string;
                     /** @description Exact canonical entity id to match. Omit on create, or set null on update, to match every entity. */
                     entity_id?: string;
-                    /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
+                    /** @description Optional payload filters. Keys must be allowed for the selected event in the canonical event catalog. A primitive value is an equality match, and enum-like fields only accept the values the event emits. Numeric fields also accept a comparison object such as {"gt": 2} or {"gte": 1, "lte": 5}; operators combine with AND and never match null. */
                     payload_filter?: {
-                        [key: string]: string | number | boolean | unknown;
+                        [key: string]: (string | number | boolean | {
+                            gt?: number;
+                            gte?: number;
+                            lt?: number;
+                            lte?: number;
+                        }) | null;
                     };
                     /** @description Continuation instruction delivered to the session after the event matches. */
                     message: string;
@@ -17070,9 +21579,14 @@ export interface operations {
                             entity_type: string;
                             /** @description Exact entity id, or null when this trigger matches every entity. */
                             entity_id: string | null;
-                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
+                            /** @description Optional payload filters. Keys must be allowed for the selected event in the canonical event catalog. A primitive value is an equality match, and enum-like fields only accept the values the event emits. Numeric fields also accept a comparison object such as {"gt": 2} or {"gte": 1, "lte": 5}; operators combine with AND and never match null. */
                             payload_filter: {
-                                [key: string]: string | number | boolean | unknown;
+                                [key: string]: (string | number | boolean | {
+                                    gt?: number;
+                                    gte?: number;
+                                    lt?: number;
+                                    lte?: number;
+                                }) | null;
                             };
                             message: string;
                             /**
@@ -17105,7 +21619,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Session is closed */
+            /** @description Session is closed, or the test run already finished */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -17144,9 +21658,14 @@ export interface operations {
                             entity_type: string;
                             /** @description Exact entity id, or null when this trigger matches every entity. */
                             entity_id: string | null;
-                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
+                            /** @description Optional payload filters. Keys must be allowed for the selected event in the canonical event catalog. A primitive value is an equality match, and enum-like fields only accept the values the event emits. Numeric fields also accept a comparison object such as {"gt": 2} or {"gte": 1, "lte": 5}; operators combine with AND and never match null. */
                             payload_filter: {
-                                [key: string]: string | number | boolean | unknown;
+                                [key: string]: (string | number | boolean | {
+                                    gt?: number;
+                                    gte?: number;
+                                    lt?: number;
+                                    lte?: number;
+                                }) | null;
                             };
                             message: string;
                             /**
@@ -17219,9 +21738,14 @@ export interface operations {
                     event_type?: string;
                     /** @description Exact canonical entity id to match. Omit on create, or set null on update, to match every entity. */
                     entity_id?: string | null;
-                    /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
+                    /** @description Optional payload filters. Keys must be allowed for the selected event in the canonical event catalog. A primitive value is an equality match, and enum-like fields only accept the values the event emits. Numeric fields also accept a comparison object such as {"gt": 2} or {"gte": 1, "lte": 5}; operators combine with AND and never match null. */
                     payload_filter?: {
-                        [key: string]: string | number | boolean | unknown;
+                        [key: string]: (string | number | boolean | {
+                            gt?: number;
+                            gte?: number;
+                            lt?: number;
+                            lte?: number;
+                        }) | null;
                     };
                     /** @description Continuation instruction delivered to the session after the event matches. */
                     message?: string;
@@ -17250,9 +21774,14 @@ export interface operations {
                             entity_type: string;
                             /** @description Exact entity id, or null when this trigger matches every entity. */
                             entity_id: string | null;
-                            /** @description Optional payload equality filters. Keys must be allowed for the selected event in the canonical event catalog, and enum-like fields only accept the values the event emits. */
+                            /** @description Optional payload filters. Keys must be allowed for the selected event in the canonical event catalog. A primitive value is an equality match, and enum-like fields only accept the values the event emits. Numeric fields also accept a comparison object such as {"gt": 2} or {"gte": 1, "lte": 5}; operators combine with AND and never match null. */
                             payload_filter: {
-                                [key: string]: string | number | boolean | unknown;
+                                [key: string]: (string | number | boolean | {
+                                    gt?: number;
+                                    gte?: number;
+                                    lt?: number;
+                                    lte?: number;
+                                }) | null;
                             };
                             message: string;
                             /**
@@ -17278,6 +21807,300 @@ export interface operations {
             };
             /** @description Session or trigger not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The test run already finished */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    checkFailureGroupMatcherOverlap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Failure group ID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Candidate matcher source for this group: `async ({ testRun, testCase, traceUtils }) => boolean`. */
+                    source: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The other groups' cases the source claims. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Response payload. */
+                        data: {
+                            /** @description Cases the source was run against. */
+                            checked_cases: number;
+                            /** @description Candidate cases whose run or case could not be loaded. */
+                            skipped_cases: number;
+                            /** @description True when candidates were dropped: more than 40 cases, or more than 500 open groups. */
+                            truncated: boolean;
+                            /** @description Other groups' members the source returned true for. Empty means no overlap was found among the checked cases. */
+                            claims: {
+                                group_id: string;
+                                label: string | null;
+                                test_run_id: number;
+                                pw_test_id: string;
+                            }[];
+                            /** @description Cases where the source errored or was not run: no verdict, not a claim. */
+                            errors: {
+                                group_id: string;
+                                label: string | null;
+                                test_run_id: number;
+                                pw_test_id: string;
+                                /** @description The matcher's error kind (compile, runtime, not_boolean, timeout, out_of_memory, executor), or budget when the check ran out of time before reaching the case. */
+                                error_kind: string;
+                                error: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+            /** @description Group not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    detachFailureGroupMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Failure group id. */
+                id: string;
+                /** @description Member test to detach. */
+                test_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Membership detached. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureGroupDetachMemberResponse"];
+                };
+            };
+            /** @description Only humans and agents may detach a membership. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Group not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    matchFailureGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Run holding the case to match. */
+                    test_run_id: number;
+                    /** @description Case (Playwright test id) to match. Any status: failed or flaky. */
+                    pw_test_id: string;
+                    /** @description Dry-run this matcher source instead of the groups' matchers: `async ({ testRun, testCase, traceUtils }) => boolean`. */
+                    source?: string;
+                    /** @description Only run these groups' matchers. Default: every open group with a matcher. */
+                    group_ids?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Matcher results for the case. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Response payload. */
+                        data: {
+                            test_run_id: number;
+                            pw_test_id: string;
+                            /**
+                             * @description How many matchers returned true: one, several, or none.
+                             * @enum {string}
+                             */
+                            decision: "single" | "multiple" | "none";
+                            matched_group_ids: string[];
+                            candidate_count: number;
+                            /** @description True when the project has more than 500 open groups and only the most recently seen were run. */
+                            truncated: boolean;
+                            /** @description Matcher input contract the matchers ran under; store it with a matcher. */
+                            contract_version: number;
+                            results: {
+                                /** @description The group whose matcher ran; null for a dry-run source. */
+                                group_id: string | null;
+                                label: string | null;
+                                /** @description The matcher returned true. False on any error. */
+                                matched: boolean;
+                                error?: string;
+                                /** @description compile, runtime, not_a_function, not_boolean, timeout, out_of_memory, or executor. */
+                                error_kind?: string;
+                                duration_ms?: number;
+                                /** @description The matcher's console output. */
+                                logs: string[];
+                                /** @description Trace reads that threw, including ones the matcher caught: a false with trace errors means it could not tell, not that it did not match. */
+                                trace_errors: {
+                                    fn: string;
+                                    message: string;
+                                    swallowed?: boolean;
+                                }[];
+                            }[];
+                        };
+                    };
+                };
+            };
+            /** @description Test run or case not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    convertPullRequestToDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Repository owner. */
+                    owner: string;
+                    /** @description Repository name. */
+                    repo: string;
+                    /** @description Pull request number. */
+                    pull_number: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The PR is a draft. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubPrConvertToDraftResponse"];
+                };
+            };
+            /** @description The PR is not open. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubActionError"];
+                };
+            };
+            /** @description Caller cannot access the project. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    markPullRequestReadyForReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Repository owner. */
+                    owner: string;
+                    /** @description Repository name. */
+                    repo: string;
+                    /** @description Pull request number. */
+                    pull_number: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The PR is ready for review. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubPrReadyForReviewResponse"];
+                };
+            };
+            /** @description The PR is not open. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubActionError"];
+                };
+            };
+            /** @description Caller cannot access the project. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17320,7 +22143,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description A proxy rule rejected the request, or GitHub returned a client error. */
+            /** @description A proxy rule rejected the request (including a squash or rebase PR merge), or GitHub returned a client error. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -17329,7 +22152,7 @@ export interface operations {
                     "application/json": components["schemas"]["GithubProxyError"];
                 };
             };
-            /** @description The target repository is blocked, or a sandbox proxy rule forbade the request. */
+            /** @description The URL uses a numeric repository id, the request writes to a protected branch, a project API key attempted a write, or a sandbox proxy rule forbade the request. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17473,6 +22296,198 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaywrightVersionsResponse"];
+                };
+            };
+        };
+    };
+    compareTraceAgainstPass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Run holding the failed case. */
+                    test_run_id: number;
+                    /** @description Case (Playwright test id) to compare. */
+                    pw_test_id: string;
+                    /** @description Failed attempt to compare (retry_details.retries[].retryIndex). Default: the last failed attempt with a trace. */
+                    retry?: number;
+                    /** @description Passing attempt to compare against. Default: a passing retry in the same run, else the last pass before this run in the same environment, else in any environment (30-day history). */
+                    baseline?: {
+                        test_run_id: number;
+                        retry?: number;
+                    };
+                    /** @description Include the page as each side left the focus step (base64). Default false. */
+                    screenshots?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The comparison. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Response payload. */
+                        data: {
+                            failure: {
+                                test_run_id: number;
+                                retry: number;
+                                file: string;
+                            };
+                            baseline: {
+                                test_run_id: number;
+                                retry: number;
+                                file: string;
+                                /** @enum {string} */
+                                source: "requested" | "same_run" | "same_environment" | "other_environment";
+                                environment_id: number | null;
+                            } | null;
+                            /** @description Other recent passes, newest first. */
+                            other_baselines: {
+                                test_run_id: number;
+                                environment_id: number | null;
+                            }[];
+                            /** @description The deepest step where the failed attempt stopped, else where it first diverged; null when the steps match. */
+                            focus: {
+                                /** @description Step position, nested steps dotted ("4.2"). */
+                                index: string;
+                                /**
+                                 * @description matched: ran in both. failed: where the failed attempt stopped. extra: only in the failed attempt. missing: only in the passing attempt, before the failure. not-reached: only in the passing attempt, after the failure.
+                                 * @enum {string}
+                                 */
+                                kind: "matched" | "failed" | "extra" | "missing" | "not-reached";
+                                title: string;
+                                location: string | null;
+                                pass_ms: number | null;
+                                fail_ms: number | null;
+                                error: string | null;
+                                /** @description At least 2x and 1s slower than in the passing attempt. */
+                                slower: boolean;
+                            } | null;
+                            /** @description Aligned top-level steps, plus the nested steps on the path to the focus step. */
+                            rows: {
+                                /** @description Step position, nested steps dotted ("4.2"). */
+                                index: string;
+                                /**
+                                 * @description matched: ran in both. failed: where the failed attempt stopped. extra: only in the failed attempt. missing: only in the passing attempt, before the failure. not-reached: only in the passing attempt, after the failure.
+                                 * @enum {string}
+                                 */
+                                kind: "matched" | "failed" | "extra" | "missing" | "not-reached";
+                                title: string;
+                                location: string | null;
+                                pass_ms: number | null;
+                                fail_ms: number | null;
+                                error: string | null;
+                                /** @description At least 2x and 1s slower than in the passing attempt. */
+                                slower: boolean;
+                            }[];
+                            screenshots: {
+                                pass: {
+                                    mime_type: string;
+                                    base64: string;
+                                } | null;
+                                fail: {
+                                    mime_type: string;
+                                    base64: string;
+                                } | null;
+                            } | null;
+                            /** @description Why there is no comparison (e.g. no passing attempt). */
+                            note: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Test run, case, or trace not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Reading a trace failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    queryTrace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Run holding the case. */
+                    test_run_id: number;
+                    /** @description Case (Playwright test id) whose trace to read. */
+                    pw_test_id: string;
+                    /** @description Attempt to read (retry_details.retries[].retryIndex). Default: the last attempt with a trace. */
+                    retry?: number;
+                    /**
+                     * @description trace-utils function to call: listSteps, getUniquePageIds, searchNetwork, getConsoleLogs, getWebSocketFrames, getDomSnapshot or extractScreenshots.
+                     * @enum {string}
+                     */
+                    fn: "listSteps" | "getUniquePageIds" | "searchNetwork" | "getConsoleLogs" | "getWebSocketFrames" | "getDomSnapshot" | "extractScreenshots";
+                    /** @description The function's arguments without `file` (e.g. { urlPattern, status, bodies } for searchNetwork). See the trace-utils skill. */
+                    args?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description The function's result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Response payload. */
+                        data: {
+                            /** @description The trace.zip that was read. */
+                            file: string;
+                            retry: number;
+                            fn: string;
+                            /** @description What the trace-utils function returned (screenshots carry base64 image data). */
+                            result?: unknown;
+                        };
+                    };
+                };
+            };
+            /** @description Test run, case, or trace not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The trace-utils call failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -17897,6 +22912,402 @@ export interface operations {
             };
         };
     };
+    listDashboardBanners: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active banners. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardBannersResponse"];
+                };
+            };
+            /** @description Missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getBillingMonthSummary: {
+        parameters: {
+            query?: {
+                /** @description A UTC calendar month (YYYY-MM), for any org. Defaults to the current period. */
+                month?: string;
+                /** @description A usage period by key (YYYY-MM-DD, from `/api/billing/periods`): a calendar month, or a billing cycle for an org on a live Dodo subscription. Defaults to the current period. */
+                period?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The month summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingMonthSummaryResponse"];
+                };
+            };
+            /** @description Invalid month or period, or missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The project has no org. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listBillingPeriods: {
+        parameters: {
+            query?: {
+                /** @description How many periods. Defaults to 2. */
+                count?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Usage periods, latest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingPeriodsResponse"];
+                };
+            };
+            /** @description Invalid query, or missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The project has no org. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reconcileSubscriptionUsage: {
+        parameters: {
+            query?: {
+                cycle_end?: string;
+                cycle_start?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Dodo subscription id. */
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The reconciliation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionUsageReconcileResponse"];
+                };
+            };
+            /** @description Payments are not configured, or an empty cycle. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No such subscription. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createSubscriptionCheckout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The checkout. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionCheckoutResponse"];
+                };
+            };
+            /** @description Payments not configured, INR org, no plan for sale, or no email for the Dodo customer. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The project has no org. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The org already has a plan or a live subscription. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    endSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plan has ended. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionEndResponse"];
+                };
+            };
+            /** @description Payments are not configured. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The org has no active subscription. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The subscription is on hold (pay first), is already being ended, or can't be ended in Dodo right now. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSubscriptionOffer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The offer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionOfferResponse"];
+                };
+            };
+        };
+    };
+    createSubscriptionPortalSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The portal session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionPortalResponse"];
+                };
+            };
+            /** @description Payments are not configured. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The org has no Dodo customer. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setUsageLimit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Whole dollars, in cents; null removes it. */
+                    cap_cents: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated usage limit. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageLimitResponse"];
+                };
+            };
+            /** @description Invalid body, or the plan doesn't support a limit. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The project has no org. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listUsageLimitEvents: {
+        parameters: {
+            query?: {
+                per_page?: number;
+                /** @description Return events older than this id (pagination cursor). */
+                before_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Usage limit events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageLimitEventsResponse"];
+                };
+            };
+            /** @description Invalid query, or missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The project has no org. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listChatSessions: {
         parameters: {
             query?: {
@@ -17969,12 +23380,27 @@ export interface operations {
             content: {
                 "application/json": {
                     message?: string | null;
+                    /** @description Hive agent to run, as `<name>` (its `@latest` version) or `<name>@<version>`, e.g. `main@3`. Defaults to `main`. Rejected with a 400 when Hive does not serve that agent or version. The agent version decides the runtime, model, tools and prompt; `model` still overrides its model. List agents with `GET /api/hive/agents`. */
+                    agent?: string | null;
+                    /**
+                     * @deprecated
+                     * @description Deprecated alias of `agent`. The legacy values `chat` and `triage` mean the default agent.
+                     */
                     mode?: string | null;
-                    source?: string | null;
-                    source_identifier?: string | null;
+                    /** @description What the session is about. Each test run must belong to the session's project, otherwise the request fails with a 400. */
+                    links?: {
+                        /** @enum {string} */
+                        entity_type: "test_run";
+                        entity_id: number;
+                        /** @description Tests in the run this session is scoped to. Omit for the whole run. */
+                        pw_test_ids?: string[] | null;
+                    }[] | null;
                     model?: string | null;
+                    /** @description Deprecated. Sessions start on the project default branch; a different branch is added to `message` as an instruction to work from it. */
                     base_branch?: string | null;
                     created_by?: string | null;
+                    /** @description When the caller is an agent session, wake it the next time this session waits for input (one-shot). Defaults to true; pass false for a fire-and-forget message. Ignored for other callers. */
+                    subscribe?: boolean | null;
                 };
             };
         };
@@ -17990,6 +23416,15 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Billing blocked: an overdue invoice, a failed renewal, no active plan, or the spend limit reached. */
+            402: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18045,8 +23480,6 @@ export interface operations {
             content: {
                 "application/json": {
                     title?: string;
-                    source?: string;
-                    source_identifier?: string;
                     model?: string;
                     impacted_tests?: unknown;
                 };
@@ -18353,6 +23786,45 @@ export interface operations {
             };
         };
     };
+    getChatSessionEntryRange: {
+        parameters: {
+            query: {
+                /** @description First log_seq to return (inclusive). */
+                from_seq: number;
+                /** @description Last log_seq to return (inclusive). */
+                to_seq: number;
+                /** @description Maximum entries to return (1-200). Default 100. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Chat session ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entries in the range, and where the next page starts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionEntryRangeResponse"];
+                };
+            };
+            /** @description Chat session not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getChatSessionEntryMedia: {
         parameters: {
             query?: never;
@@ -18477,7 +23949,7 @@ export interface operations {
                                  * @description Whether the edge is a manager handoff or delegation.
                                  * @enum {string}
                                  */
-                                relationship: "manager_handoff" | "delegation";
+                                relationship: "delegation" | "manager_handoff";
                             }[];
                         };
                     };
@@ -18538,7 +24010,9 @@ export interface operations {
                                     entity_type: string;
                                     entity_id: string | null;
                                     payload_filter: {
-                                        [key: string]: string | number | boolean | unknown;
+                                        [key: string]: (string | number | boolean | {
+                                            [key: string]: number;
+                                        }) | null;
                                     };
                                     message: string;
                                     /** @enum {string} */
@@ -18631,9 +24105,11 @@ export interface operations {
                 "application/json": {
                     message: string;
                     /** @enum {string} */
-                    send_action: "steer" | "follow_up" | "stop";
+                    send_action: "steer" | "follow_up";
                     created_by?: string | null;
                     rpc_command_id?: string;
+                    /** @description When the caller is an agent session, wake it the next time this session waits for input (one-shot). Defaults to true; pass false for a fire-and-forget message. Ignored for other callers. */
+                    subscribe?: boolean | null;
                 };
             };
         };
@@ -18649,6 +24125,15 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Billing admission denied. */
+            402: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18699,6 +24184,70 @@ export interface operations {
             };
             /** @description Sandbox logs not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxErrorMessage"];
+                };
+            };
+        };
+    };
+    getChatSessionSandboxCommit: {
+        parameters: {
+            query?: {
+                /** @description Also return the commit's unified diff. */
+                include_diff?: "true" | "false";
+            };
+            header?: never;
+            path: {
+                /** @description Chat session ID. */
+                id: number;
+                /** @description Full or abbreviated commit SHA. */
+                sha: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The commit. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxCommit"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Sandbox or commit not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxErrorMessage"];
+                };
+            };
+            /** @description Sandbox is paused. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxErrorMessage"];
+                };
+            };
+            /** @description Reading the commit failed. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19002,26 +24551,29 @@ export interface operations {
             };
         };
     };
-    getChatSessionCombinedAnalytics: {
+    getChatSessionTranscript: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Chat session ID. */
+                id: number;
+            };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Combined analytics charts. */
+            /** @description Transcript rows, media referenced by message text, and the newest log_seq. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ChatSessionCombinedAnalyticsResponse"];
+                    "application/json": components["schemas"]["ChatSessionTranscriptResponse"];
                 };
             };
-            /** @description Unauthorized. */
-            403: {
+            /** @description Chat session not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19172,6 +24724,201 @@ export interface operations {
             };
         };
     };
+    listCreditGrants: {
+        parameters: {
+            query?: {
+                /** @description Organisation to list grants for. */
+                org_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The organisation's credit grants. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditGrantListResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Organisation not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createCreditGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateCreditGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description The created credit grant. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditGrantResponse"];
+                };
+            };
+            /** @description Validation failed, the expiry is in the past, or the trial plan is missing or unusable. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Organisation not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The organisation is on a plan that isn't a trial, or a trial would overlap another assignment. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listCreditOffers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All credit offers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditOfferListResponse"];
+                };
+            };
+        };
+    };
+    createCreditOffer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateCreditOfferRequest"];
+            };
+        };
+        responses: {
+            /** @description The created credit offer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditOfferResponse"];
+                };
+            };
+            /** @description Validation failed, the recipient is invalid, the deadline is in the past, or the trial plan is missing or unusable. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The email or domain already has an open offer, or a work domains offer is already open. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    revokeCreditOffer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Credit offer ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The revoked credit offer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditOfferResponse"];
+                };
+            };
+            /** @description Credit offer not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The offer was already claimed or revoked. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     dodoPaymentsWebhook: {
         parameters: {
             query?: never;
@@ -19182,20 +24929,12 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description Event type, e.g. "payment.succeeded". */
+                    /** @description Event type, e.g. "subscription.active". */
                     type: string;
                     /** @description Event payload. */
                     data: {
-                        /** @description Dodo payment ID. */
-                        payment_id?: string;
-                        /** @description Charged amount in minor units, tax included. */
-                        total_amount?: number;
-                        /** @description Tax portion of total_amount in minor units. */
-                        tax?: number;
-                        /** @description Metadata set at checkout session creation. */
-                        metadata?: {
-                            [key: string]: string;
-                        };
+                        /** @description Dodo subscription ID. */
+                        subscription_id?: string;
                     };
                 };
             };
@@ -19212,6 +24951,15 @@ export interface operations {
             };
             /** @description Missing or invalid webhook signature. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Dodo API credentials are not configured. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19542,75 +25290,29 @@ export interface operations {
             };
         };
     };
-    detachFailureGroupMember: {
+    importLoomFile: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                /** @description Failure group id. */
-                id: string;
-                /** @description Member test to detach. */
-                test_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Membership detached. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FailureGroupDetachMemberResponse"];
-                };
-            };
-            /** @description Only humans may detach a membership. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Group not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    shareFailureGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Failure group ID. */
-                id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["ShareFailureGroupRequest"];
+                "application/json": components["schemas"]["ImportLoomFileRequest"];
             };
         };
         responses: {
-            /** @description Diagnosis shared. */
+            /** @description The imported video. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FailureGroupShareResponse"];
+                    "application/json": components["schemas"]["ImportLoomFileResponse"];
                 };
             };
-            /** @description Invalid request or destination. */
+            /** @description Invalid request. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -19619,16 +25321,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Group not found, or it has no diagnosis. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Failed to post message. */
+            /** @description Failed to process the Loom video. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -19751,15 +25444,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GithubBranchSearchResponse"];
-                };
-            };
-            /** @description Repository access is blocked. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Repository not found. */
@@ -20099,6 +25783,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Caller cannot access the organisation. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     getMainInstallationMetadata: {
@@ -20211,7 +25904,7 @@ export interface operations {
                     "application/json": components["schemas"]["GithubPrMergeResponse"];
                 };
             };
-            /** @description The PR is not open or not mergeable. */
+            /** @description The PR is not open, is a draft, is not mergeable, or GitHub refused the merge. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -20353,7 +26046,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Reporter check runs and PR comments. */
+            /** @description Reporter check runs, PR comments and linked test changes checks. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -20520,6 +26213,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Caller cannot access the organisation. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     getReporterInstallationMetadata: {
@@ -20631,6 +26333,53 @@ export interface operations {
             };
         };
     };
+    getReporterPullRequest: {
+        parameters: {
+            query: {
+                /** @description Project whose reporter App reads the PR. */
+                project_id: number;
+                repo_owner: string;
+                repo_name: string;
+                /** @description App PR number. When omitted, the PR is found by head_sha. */
+                pr_number?: number;
+                /** @description Commit the reporter delivered to. Compared against the PR's current head; also used to find the PR when pr_number is omitted. */
+                head_sha?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The PR's current state and head. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GhReporterPullRequestResponse"];
+                };
+            };
+            /** @description Neither pr_number nor head_sha given. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project, installation or pull request not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getRepoTree: {
         parameters: {
             query: {
@@ -20682,45 +26431,40 @@ export interface operations {
             };
         };
     };
-    gsheetDriveWebhook: {
+    listHiveAgents: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description Drive notification channel ID. */
-                "x-goog-channel-id"?: string;
-                /** @description Drive resource state (e.g. `sync`, `update`). */
-                "x-goog-resource-state"?: string;
-                /** @description Per-channel HMAC token authenticating the push. */
-                "x-goog-channel-token"?: string;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Notification acknowledged. */
+            /** @description The available Hive agents. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["HiveAgentsResponse"];
+                };
             };
-            /** @description Missing channel ID. */
-            400: {
+            /** @description Hive is not configured or the request failed. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GsheetPlainError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Invalid channel token. */
-            401: {
+            /** @description Hive returned an error response. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GsheetPlainError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -20809,6 +26553,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    sendFixtureLoginEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["FixtureLoginEmailRequest"];
+            };
+        };
+        responses: {
+            /** @description The email was sent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixtureLoginEmailResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
         };
     };
@@ -20967,6 +26744,48 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    seedChatSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ChatSessionSeedRequest"];
+            };
+        };
+        responses: {
+            /** @description The seeded chat session. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionSeedResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not available in this environment. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21251,6 +27070,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["InvoiceSimpleError"];
                 };
             };
+            /** @description The organisation is billed by Dodo. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     getInvoice: {
@@ -21369,6 +27197,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description The target organisation is billed by Dodo. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     listInvoiceBillingLines: {
@@ -21438,6 +27275,70 @@ export interface operations {
                 };
             };
             /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invoice not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    previewInvoiceEmail: {
+        parameters: {
+            query?: {
+                /** @description When `true`, preview the test email (sent to the internal test recipient). Defaults to `false`. */
+                is_test_email?: "true" | "false";
+            };
+            header?: never;
+            path: {
+                /** @description Invoice ID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rendered email. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Response payload. */
+                        data: {
+                            /** @description Sender address. */
+                            from: string;
+                            /** @description To recipients. */
+                            to: string[];
+                            /** @description CC recipients. */
+                            cc: string[];
+                            /** @description BCC recipients. */
+                            bcc: string[];
+                            /** @description Reply-To addresses. */
+                            reply_to: string[];
+                            /** @description Email subject. */
+                            subject: string;
+                            /** @description Rendered email body HTML. */
+                            html: string;
+                            /** @description Attached PDF filename, or null when the invoice has no PDF. */
+                            attachment_filename: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Invalid invoice ID or organisation not found. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -21698,6 +27599,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description The organisation is billed by Dodo. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     listOrgInvoices: {
@@ -21720,60 +27630,6 @@ export interface operations {
             };
             /** @description Invalid request or missing project scope. */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    createInvoiceCheckoutSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Invoice ID. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["CreateInvoiceCheckoutSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description The checkout session. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InvoiceCheckoutSessionResponse"];
-                };
-            };
-            /** @description Invalid request, unsupported currency, or Dodo not configured. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Invoice not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Invoice has no outstanding amount. */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21928,47 +27784,6 @@ export interface operations {
             };
         };
     };
-    downloadOrgInvoiceTaxInvoice: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Invoice ID. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The tax invoice PDF. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/pdf": string;
-                };
-            };
-            /** @description Invalid invoice id or payments not configured. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Invoice or its tax invoice not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     listUpcomingInvoiceReminders: {
         parameters: {
             query?: {
@@ -21992,6 +27807,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UpcomingInvoiceRemindersResponse"];
+                };
+            };
+        };
+    };
+    receiveJiraWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RequestIngestionProviderPayload"];
+            };
+        };
+        responses: {
+            /** @description Webhook processed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JiraWebhookResponse"];
+                };
+            };
+            /** @description Invalid webhook payload. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No matching install or project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -22061,6 +27918,15 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Atlassian rejected the OAuth code. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22301,6 +28167,57 @@ export interface operations {
             };
         };
     };
+    receiveLinearWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RequestIngestionProviderPayload"];
+            };
+        };
+        responses: {
+            /** @description Webhook accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinearWebhookResponse"];
+                };
+            };
+            /** @description Invalid webhook payload. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid signature. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No matching install or project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listLinearInstallations: {
         parameters: {
             query: {
@@ -22354,20 +28271,27 @@ export interface operations {
                 "application/json": {
                     /** @description Organization the installation belongs to. */
                     org_id: number;
-                    /** @description Linear app user (actor) id. */
-                    linear_app_user_id: string;
-                    /** @description Linear organization id. */
-                    linear_organization_id: string;
-                    /** @description OAuth access token for the Linear API. */
-                    linear_access_token: string;
-                    /** @description OAuth refresh token for the Linear API. */
+                    /** @description OAuth code from Linear's redirect. Required for a signed-in user. */
+                    code?: string;
+                    /**
+                     * Format: uri
+                     * @description Redirect URI the authorize request used; Linear requires it to match. Required with `code`.
+                     */
+                    redirect_uri?: string;
+                    /** @description Linear app user (actor) id. System callers only. */
+                    linear_app_user_id?: string;
+                    /** @description Linear organization id. System callers only. */
+                    linear_organization_id?: string;
+                    /** @description OAuth access token. System callers only. */
+                    linear_access_token?: string;
+                    /** @description OAuth refresh token. System callers only. */
                     linear_refresh_token?: string;
                     /**
                      * Format: date-time
-                     * @description Expiry of the access token.
+                     * @description Expiry of the access token. System callers only.
                      */
-                    linear_access_token_expires_at: string | null;
-                    /** @description Cached Linear organization/team metadata. */
+                    linear_access_token_expires_at?: string | null;
+                    /** @description Cached Linear organization/team metadata. System callers only; built from Linear for users. */
                     metadata?: {
                         organization: {
                             name: string;
@@ -22398,6 +28322,15 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Linear rejected the OAuth code. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22683,6 +28616,8 @@ export interface operations {
                 per_page?: number;
                 /** @description Filter to memories with this exact name. */
                 name?: string;
+                /** @description Only memories updated after this ISO 8601 instant. Creates, edits and deletes all move `updated_at`; combine with `include_deleted=true` to see deletions too. */
+                updated_since?: string;
                 /** @description When `true`, soft-deleted memories are included in the listing (marked via `deleted_at`). Defaults to `false`. */
                 include_deleted?: "true" | "false";
                 /** @description When `false`, each memory's `content` is returned as an empty string (skipped for a smaller/faster response). Use for name+description index views. Defaults to `true`. */
@@ -22742,7 +28677,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MemoryResponse"];
+                    "application/json": components["schemas"]["MemoryWriteResponse"];
                 };
             };
             /** @description Invalid request or missing project scope. */
@@ -22770,6 +28705,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused by the memory write gate: classified as failure/incident state. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryWriteRejectedResponse"];
                 };
             };
         };
@@ -22816,7 +28760,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeleteMemoryRequest"];
+            };
+        };
         responses: {
             /** @description Deletion succeeded. */
             200: {
@@ -22860,7 +28808,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MemoryResponse"];
+                    "application/json": components["schemas"]["MemoryWriteResponse"];
                 };
             };
             /** @description Memory not found or not accessible. */
@@ -22870,6 +28818,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused by the memory write gate: classified as failure/incident state. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryWriteRejectedResponse"];
                 };
             };
         };
@@ -22896,6 +28853,156 @@ export interface operations {
                 };
             };
             /** @description Memory not found or not accessible. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listMemoryActivity: {
+        parameters: {
+            query?: {
+                /** @description Window for the `daily` series, in days back from now. Per-memory stats always cover full history. Defaults to 90. */
+                since_days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Memory activity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryActivityResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listMemoryChanges: {
+        parameters: {
+            query: {
+                /** @description Chat session whose memory changes to list. */
+                chat_session_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session's memory changes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryChangesResponse"];
+                };
+            };
+            /** @description Invalid request or missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found or not accessible. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listMemoryClassifications: {
+        parameters: {
+            query?: {
+                /** @description Limit to memories in this project. Defaults to all projects. */
+                project_id?: number;
+                /** @description Vocabulary version to read labels for. Defaults to the current vocabulary. */
+                vocabulary_version?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Memory classifications. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryClassificationsResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getMemoryUsage: {
+        parameters: {
+            query?: {
+                /** @description Window in days back from now. Defaults to 7. */
+                days?: number;
+                /** @description Rows per list. Defaults to 10. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Memory usage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryUsageResponse"];
+                };
+            };
+            /** @description Invalid request or missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found or not accessible. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -22944,7 +29051,80 @@ export interface operations {
             };
         };
     };
-    completeOnboarding: {
+    listNotifications: {
+        parameters: {
+            query?: {
+                /** @description Maximum read notifications to return. Default 20. */
+                read_limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The user's notifications. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationListResponse"];
+                };
+            };
+            /** @description Only signed-in users have notifications. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    markNotificationRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Notification ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notification's read time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationReadResponse"];
+                };
+            };
+            /** @description Only signed-in users have notifications. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Notification not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createDummyNotification: {
         parameters: {
             query?: never;
             header?: never;
@@ -22953,17 +29133,98 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["OnboardingCompleteRequest"];
+                "application/json": components["schemas"]["CreateDummyNotificationBody"];
             };
         };
         responses: {
-            /** @description Created org and project. */
+            /** @description The created notification. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DummyNotificationResponse"];
+                };
+            };
+            /** @description Only signed-in users have notifications. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not available, or nothing to notify about. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    markAllNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description How many notifications were marked read. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OnboardingCompleteResponse"];
+                    "application/json": components["schemas"]["NotificationsReadAllResponse"];
+                };
+            };
+            /** @description Only signed-in users have notifications. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOAuthAuthorizeUrl: {
+        parameters: {
+            query: {
+                /** @description OAuth provider. */
+                provider: "slack" | "linear" | "jira" | "github";
+                /** @description The dashboard callback the provider returns to. */
+                redirect_uri: string;
+                /** @description CSRF state, echoed back to the callback. */
+                state: string;
+                /** @description Slack only: pins the install to a workspace, so re-auth updates it instead of showing a picker. */
+                team?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The authorize URL. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            /** @description The provider's authorize URL. */
+                            url: string;
+                        };
+                    };
                 };
             };
             /** @description Invalid request. */
@@ -22975,8 +29236,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Caller is not a member of the given organisation. */
-            403: {
+            /** @description The provider's client ID is not configured. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22986,26 +29247,44 @@ export interface operations {
             };
         };
     };
-    getOnboardingContext: {
+    getOAuthClient: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description OAuth client ID. */
+                client_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Onboarding context. */
+            /** @description The OAuth client. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OnboardingContextResponse"];
+                    "application/json": {
+                        data: {
+                            client_id: string;
+                            /** @description Name the app gave itself. */
+                            name: string;
+                            /**
+                             * @description dynamic: the app registered itself and is unverified. manual: registered by Empirical.
+                             * @enum {string}
+                             */
+                            registration_type: "dynamic" | "manual";
+                            /** @description Hosts the app receives access tokens on. */
+                            redirect_hosts: string[];
+                            /** @description Whether any redirect goes to a loopback address, i.e. an app on the user's own computer. */
+                            redirects_to_this_device: boolean;
+                        };
+                    };
                 };
             };
-            /** @description No verified email on the session. */
-            400: {
+            /** @description No OAuth client with this ID. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23280,6 +29559,39 @@ export interface operations {
             };
         };
     };
+    createOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["OrgCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created organization. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgCreateResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     updateOrg: {
         parameters: {
             query?: never;
@@ -23325,6 +29637,15 @@ export interface operations {
             };
             /** @description Organization not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An email domain is already claimed by another org. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23590,7 +29911,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Org ids granted via invites and domain match. */
+            /** @description The user's memberships and super-admin flag after resolution. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -23601,6 +29922,15 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The user's email is not confirmed. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23619,8 +29949,8 @@ export interface operations {
                 per_page?: number;
                 /** @description Filter to assignments for this organisation. */
                 org_id?: number | null;
-                /** @description Filter to assignments for this order-form line. */
-                order_form_line_id?: number | null;
+                /** @description Filter to assignments for this plan. */
+                plan_id?: number | null;
             };
             header?: never;
             path?: never;
@@ -23670,13 +30000,22 @@ export interface operations {
                     "application/json": components["schemas"]["PlanAssignmentResponse"];
                 };
             };
-            /** @description Validation failed or the organisation does not exist. */
+            /** @description Validation failed, or the organisation or plan does not exist. */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["CreatePlanAssignmentBadRequest"];
+                };
+            };
+            /** @description The organisation already has a plan assignment that overlaps this period. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -23758,6 +30097,227 @@ export interface operations {
             };
             /** @description Plan assignment not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The change makes the assignment overlap another one for the organisation. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getOrgPlan: {
+        parameters: {
+            query?: {
+                /** @description Usage month (YYYY-MM, UTC). Returns the plan in effect at the end of that month, or now for the current month. Defaults to now. */
+                month?: string;
+                /** @description Usage period key (YYYY-MM-DD, from `/api/billing/periods`). Returns the plan in effect at the end of that period, or now for the current period. */
+                period?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's plan status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgPlanResponse"];
+                };
+            };
+            /** @description Invalid month or period, or missing project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listPlans: {
+        parameters: {
+            query?: {
+                /** @description List this organisation's custom plans instead of the shared plans. */
+                org_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plans. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanListResponse"];
+                };
+            };
+        };
+    };
+    createPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreatePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description The created plan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanResponse"];
+                };
+            };
+            /** @description Validation failed, or `dodo_sync` is set on a plan Dodo can't bill. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A plan with this key or Dodo product already exists, or Dodo has a product for this key with other terms. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Dodo refused to create the plan's product. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getPlanById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plan ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanResponse"];
+                };
+            };
+            /** @description Invalid plan id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Plan not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updatePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plan ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UpdatePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated plan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanResponse"];
+                };
+            };
+            /** @description Validation failed, or `dodo_sync` is turned on for a plan Dodo can't bill. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Plan not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Dodo has a product for this key with other terms. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Dodo refused to rename the plan's product or create one. */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23889,7 +30449,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description effective_from / order_form_line_id require super admin. */
+            /** @description effective_from / plan_id require super admin. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -23966,10 +30526,11 @@ export interface operations {
                     name: string;
                     /** @description Unique project slug. */
                     slug: string;
-                    /** @description Repository name (without slashes). */
-                    repo_name: string;
+                    /** @description Repository name (without slashes). Defaults to `<slug>-tests`. */
+                    repo_name?: string;
                     /**
-                     * @description Repository host backing the project.
+                     * @description Repository host backing the project. A `github` repo is created in the Empirical org.
+                     * @default github
                      * @enum {string}
                      */
                     repo_host?: "github" | "pierre_code_storage";
@@ -24070,7 +30631,6 @@ export interface operations {
             content: {
                 "application/json": {
                     name?: string;
-                    has_email_reporting?: boolean;
                     default_branch?: string;
                     protected_branches?: string[];
                     /**
@@ -24427,6 +30987,120 @@ export interface operations {
             };
         };
     };
+    checkProjectRepoSettings: {
+        parameters: {
+            query?: {
+                /** @description Check this GitHub owner's repo instead of the project's (e.g. a repo transfer destination). Requires `repo_name`; can't be `empirical-run`. */
+                repo_owner?: string;
+                /** @description Repository name to check, with `repo_owner`. */
+                repo_name?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Project ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Check results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSettingsCheckResponse"];
+                };
+            };
+            /** @description Project has no GitHub repository, or invalid target. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description GitHub request failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    fixProjectRepoSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Re-checked results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSettingsCheckResponse"];
+                };
+            };
+            /** @description Project has no GitHub repository. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Repository isn't owned by empirical-run. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description GitHub request failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     triggerProjectTestCasesSync: {
         parameters: {
             query?: never;
@@ -24541,15 +31215,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StartRepoTransferBadRequest"];
-                };
-            };
-            /** @description The repo ownership add-on is not enabled for this project. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RepoTransferCodedError"];
                 };
             };
             /** @description Project not found. */
@@ -24902,6 +31567,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Value larger than 2 MB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description KV store not configured. */
             503: {
                 headers: {
@@ -25066,22 +31740,44 @@ export interface operations {
             };
         };
     };
-    getRealtimeToken: {
+    createRealtimeToken: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateRealtimeTokenBody"];
+            };
+        };
         responses: {
-            /** @description The issued realtime token. */
+            /** @description The issued token and the channels it opens. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RealtimeTokenResponse"];
+                    "application/json": components["schemas"]["ScopedRealtimeTokenResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description None of the requested channels is accessible. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Realtime service is not configured. */
@@ -25193,72 +31889,7 @@ export interface operations {
             };
         };
     };
-    listReporterTypes: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Reporter capabilities. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReporterTypesResponse"];
-                };
-            };
-        };
-    };
-    listRequests: {
-        parameters: {
-            query?: {
-                /** @description Page number (1-indexed). */
-                page?: number;
-                /** @description Items per page. */
-                per_page?: number;
-                /** @description URL-encoded JSON array of generic filter conditions; malformed input is ignored. */
-                filters?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Paginated list of requests. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestListResponse"];
-                };
-            };
-            /** @description Invalid request or missing project scope. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Project not found or inaccessible. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    createRequest: {
+    claimRunnerBackend: {
         parameters: {
             query?: never;
             header?: never;
@@ -25267,84 +31898,20 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": {
-                    /** @description Origin of the request (e.g. `linear`, `slack`). */
-                    source?: string;
-                    /** @description External identifier for the request in its source system. */
-                    source_identifier?: string;
-                    /** @description Request title. */
-                    title?: string;
-                    /** @description Request description. */
-                    description?: string;
-                    /**
-                     * @description Initial status; defaults to `open`.
-                     * @enum {string}
-                     */
-                    status?: "draft" | "open" | "in-review" | "closed" | "resolved";
-                };
+                "application/json": components["schemas"]["ClaimRunnerBackendBody"];
             };
         };
         responses: {
-            /** @description The created request and session. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CreateRequestResponse"];
-                };
-            };
-            /** @description Missing required fields or invalid input. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CreateRequestError"];
-                };
-            };
-            /** @description Project not found or inaccessible. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Failed to create request. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    getRequest: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Request ID. */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The request. */
+            /** @description The backend after the call. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RequestResponse"];
+                    "application/json": components["schemas"]["ClaimRunnerBackendResponse"];
                 };
             };
-            /** @description Invalid request ID. */
+            /** @description The stack's resources are not where Empirical expects. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -25353,8 +31920,53 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Request not found. */
+            /** @description The stack is in a different account or region than the registration. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown registration token. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The registration was claimed by another stack. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The registration link expired. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Empirical assumed the role but a check failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Empirical cannot assume the role yet; retry. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25364,28 +31976,25 @@ export interface operations {
             };
         };
     };
-    deleteRequest: {
+    getProjectRunnerBackend: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                /** @description Request ID. */
-                id: number;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The deleted request ID. */
+            /** @description The project's runner backend, or null. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeletedRequestResponse"];
+                    "application/json": components["schemas"]["ProjectRunnerBackendDetailResponse"];
                 };
             };
-            /** @description Invalid request ID. */
+            /** @description Missing or invalid project scope. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -25394,7 +32003,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Request not found or not deleted. */
+            /** @description Project not found or not accessible. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -25405,51 +32014,73 @@ export interface operations {
             };
         };
     };
-    updateRequest: {
+    removeProjectRunnerBackend: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Request ID. */
-                id: number;
+                /** @description A runner backend of the project's organisation. */
+                id: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The runner was removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveRunnerBackendResponse"];
+                };
+            };
+            /** @description Runner backend not found in this organisation. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The runner is active or still used by a project. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    renameProjectRunnerBackend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A runner backend of the project's organisation. */
+                id: number | null;
             };
             cookie?: never;
         };
         requestBody?: {
             content: {
-                "application/json": {
-                    /** @description New request title. */
-                    title?: string;
-                    /** @description New request description. */
-                    description?: string;
-                    /**
-                     * @description New request status.
-                     * @enum {string}
-                     */
-                    status?: "draft" | "open" | "in-review" | "closed" | "resolved";
-                };
+                "application/json": components["schemas"]["RenameRunnerBackendBody"];
             };
         };
         responses: {
-            /** @description The updated request. */
+            /** @description The renamed runner. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UpdatedRequestResponse"];
+                    "application/json": components["schemas"]["RunnerBackendResponse"];
                 };
             };
-            /** @description No fields to update or invalid input. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request not found or not updated. */
+            /** @description Runner backend not found in this organisation. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -25460,37 +32091,28 @@ export interface operations {
             };
         };
     };
-    listRequestChatSessions: {
+    disconnectProjectRunnerBackend: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Request ID. */
-                id: number;
+                /** @description A runner backend of the project's organisation. */
+                id: number | null;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Chat sessions for the request (or an empty-state message). */
+            /** @description The disabled backend. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RequestChatSessionsResponse"];
+                    "application/json": components["schemas"]["DisconnectRunnerBackendResponse"];
                 };
             };
-            /** @description Invalid request ID. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Request not found. */
+            /** @description Runner backend not found in this organisation. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -25501,39 +32123,69 @@ export interface operations {
             };
         };
     };
-    createRequestChatSession: {
+    enableProjectRunnerBackend: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Request ID. */
-                id: number;
+                /** @description A runner backend of the project's organisation. */
+                id: number | null;
             };
             cookie?: never;
         };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /** @description Project the chat session belongs to. */
-                    project_id?: number | string | unknown;
-                    /** @description First message to send to the agent. */
-                    initial_prompt?: string | null;
-                    /** @description Model to use for the chat session. */
-                    model?: string | null;
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description The created chat session. */
+            /** @description Every check, and the backend after them. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RequestSessionResponse"];
+                    "application/json": components["schemas"]["RunnerBackendVerifyResponse"];
                 };
             };
-            /** @description Missing acting user or project_id, or invalid input. */
+            /** @description Runner backend not found in this organisation. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The backend is not disabled, or its stack was deleted. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createProjectRunnerBackendRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A runner backend of the project's organisation. */
+                id: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The registration link. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerBackendRegistrationResponse"];
+                };
+            };
+            /** @description The backend's region has no published template. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -25542,8 +32194,195 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Project not found or inaccessible. */
+            /** @description Runner backend not found in this organisation. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The backend is no longer pending. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The published template could not be read. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listProjectOrgRunnerBackends: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The runner backends. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgRunnerBackendListResponse"];
+                };
+            };
+            /** @description Missing or invalid project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setScopedProjectRunnerBackend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SetProjectRunnerBackendBody"];
+            };
+        };
+        responses: {
+            /** @description The project's backend. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRunnerBackendResponse"];
+                };
+            };
+            /** @description The backend is not active. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Runner backend not found in this organisation. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setupProjectRunnerBackend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SetupRunnerBackendBody"];
+            };
+        };
+        responses: {
+            /** @description The backend and its link. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupRunnerBackendResponse"];
+                };
+            };
+            /** @description The region has no published template. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A runner is already connected in that account and region, or a disconnected one's stack still exists. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The published template could not be read. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    verifyProjectRunnerBackend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every check, and the backend after them. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerBackendVerifyResponse"];
+                };
+            };
+            /** @description Missing or invalid project scope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found, or it runs on Empirical-hosted. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The runner backend is disabled. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25638,6 +32477,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listProjectSandboxSnapshots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project ID (positive integer). */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The project's sandbox snapshots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxSnapshotListResponse"];
                 };
             };
         };
@@ -25759,6 +32621,238 @@ export interface operations {
             };
         };
     };
+    listSystemMessages: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent system messages, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemMessageListResponse"];
+                };
+            };
+        };
+    };
+    createSystemMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateSystemMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description The message and its per-project delivery. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateSystemMessageResponse"];
+                };
+            };
+            /** @description A listed project does not exist. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Broadcast requested but no project has an open manager session. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSystemMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The message and its per-project status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemMessageDetailResponse"];
+                };
+            };
+            /** @description System message not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ackSystemMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AckSystemMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description The recorded acknowledgement. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AckSystemMessageResponse"];
+                };
+            };
+            /** @description Caller is not a manager chat session. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description System message was not sent to this project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listTaskChatSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Task ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chat sessions for the task (or an empty-state message). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskChatSessionsResponse"];
+                };
+            };
+            /** @description Invalid task ID. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Task not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    createTaskChatSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Task ID. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Project the chat session belongs to. */
+                    project_id?: (number | string) | null;
+                    /** @description First message to send to the agent. */
+                    initial_prompt?: string | null;
+                    /** @description Model to use for the chat session. */
+                    model?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The created chat session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskSessionResponse"];
+                };
+            };
+            /** @description Missing acting user or project_id, or invalid input. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project not found or inaccessible. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     ingestTestCaseRunEndEvent: {
         parameters: {
             query?: never;
@@ -25822,8 +32916,8 @@ export interface operations {
                 "application/json": {
                     /** @description Parent test run ID (run_id). */
                     testRunId: number;
-                    /** @description Repository name of the project owning the run. */
-                    projectRepoName: string;
+                    /** @description Deprecated and ignored: the run's own project is used. */
+                    projectRepoName?: string;
                     /** @description Zero-based index of the shard being updated. */
                     shardIndex: number;
                     /** @description Total shard count for the run. Required for `run_test` jobs; omitted for `merge_reports`. */
@@ -25837,7 +32931,7 @@ export interface operations {
                     errorCode?: string;
                     /** @description Resolved head SHA, recorded on first shard start. */
                     testRunHeadSha?: string;
-                    /** @description Resolved branch, recorded on first shard start. */
+                    /** @description Deprecated and ignored: the run's own branch is used. */
                     testRunBranch?: string;
                     /**
                      * @description Job type for the shard. Defaults to `run_test`.
@@ -25866,7 +32960,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Project, test run, environment, or shard not found. */
+            /** @description Test run or shard not found. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -26008,96 +33102,6 @@ export interface operations {
             };
         };
     };
-    createUploadUrls: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /** @description Files to generate presigned upload URLs for. */
-                    files: {
-                        /** @description File name; appended to `destination_dir`. */
-                        name: string;
-                        /** @description MIME type signed into the presigned URL. */
-                        type: string;
-                    }[];
-                    /** @description Directory prefix (key prefix) within the bucket. */
-                    destination_dir: string;
-                    /** @description Target R2 bucket name. */
-                    bucket: string;
-                };
-            };
-        };
-        responses: {
-            /** @description The generated presigned upload URLs. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CreateUploadUrlsResponse"];
-                };
-            };
-            /** @description Invalid request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    uploadLoomVideo: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /** @description Loom share URL (loom.com/share/<id>). */
-                    url: string;
-                };
-            };
-        };
-        responses: {
-            /** @description The uploaded Loom video. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LoomUploadResponse"];
-                };
-            };
-            /** @description Invalid Loom URL. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Failed to process the Loom video. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     listMyGithubLinks: {
         parameters: {
             query?: never;
@@ -26137,12 +33141,14 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description User ID to link the GitHub account to. */
-                    user_id: string;
-                    /** @description GitHub numeric user ID. */
-                    github_user_id: string;
-                    /** @description GitHub login/username. */
-                    github_username: string;
+                    /** @description OAuth code from GitHub's redirect to the reporter app callback. Required for a signed-in user, whose account is linked to the GitHub user who authorized it. */
+                    code?: string;
+                    /** @description User ID to link the GitHub account to. System callers only. */
+                    user_id?: string;
+                    /** @description GitHub numeric user ID. System callers only. */
+                    github_user_id?: string;
+                    /** @description GitHub login/username. System callers only. */
+                    github_username?: string;
                     /** @description GitHub display name. */
                     github_display_name?: string | null;
                     /** @description GitHub avatar URL. */
@@ -26164,6 +33170,15 @@ export interface operations {
             };
             /** @description Invalid request. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description GitHub rejected the OAuth code. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -26223,6 +33238,88 @@ export interface operations {
             };
         };
     };
+    getCurrentUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current user. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentUserResponse"];
+                };
+            };
+        };
+    };
+    getMyAnnouncementsSeen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Announcement seen time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnouncementsSeenResponse"];
+                };
+            };
+            /** @description User not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    markMyAnnouncementsSeen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MarkAnnouncementsSeenRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated seen time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnouncementsSeenResponse"];
+                };
+            };
+            /** @description User not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     createMyMemberships: {
         parameters: {
             query?: never;
@@ -26243,6 +33340,56 @@ export interface operations {
             };
             /** @description No verified email on the session. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getMyOnboarding: {
+        parameters: {
+            query?: {
+                /** @description Super admins only: the email of the user whose checklist to return. */
+                view_as?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's onboarding checklist. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingChecklistResponse"];
+                };
+            };
+            /** @description No verified email on the session. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description `view_as` needs a super admin. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Project or `view_as` user not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -26322,6 +33469,39 @@ export interface operations {
             };
             /** @description Link not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    trackTelemetryEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TelemetryTrackRequest"];
+            };
+        };
+        responses: {
+            /** @description Event accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelemetryTrackResponse"];
+                };
+            };
+            /** @description Invalid event. */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
