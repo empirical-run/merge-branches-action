@@ -38,5 +38,5 @@ unchanging release reference.
 
 When a pull request is merged:
 1. The action extracts the base branch (e.g., `main`) and the merged branch (e.g., `feature-branch`)
-2. It calls the Empirical API to merge the corresponding branches in your test repository
+2. It calls the Empirical API, which merges the open pull request from the matching branch in your test repository. A closed or draft pull request is left unmerged.
 3. This keeps your test repository in sync with your application repository
